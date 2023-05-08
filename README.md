@@ -1,3 +1,3 @@
-# comdex--ngsi2mqtt
+# comdex
 
-#UNDER MIGRATION, DOCUMENTATION TO BE ADDED SOON
+Documentation coming soon.
