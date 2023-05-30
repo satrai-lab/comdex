@@ -1,3 +1,14 @@
+# ComDeX Action Handler Tool
+
+# Version: 0.6.1
+# Author: Nikolaos Papadakis 
+# Requirements:
+# - Python 3.7 or above
+# - Shapely library
+# - paho-mqtt library
+
+# For more information and updates, visit: [https://github.com/SAMSGBLab/ComDeX]
+
 from pickle import TRUE
 import sys
 import json
@@ -18,8 +29,6 @@ import urllib.request
 
 
 
-
-
 #default values of mqtt broker to communicate with
 default_broker_adress='localhost'
 default_broker_port=1026
@@ -36,7 +45,18 @@ full_data=''
     
 
 
-
+#Function: post_entity
+#Description: This function is used to create a new NGSI-LD entity in the ComDeX node.
+#Parameters:
+#- data: The data of the entity to be created.
+#- my_area: The area or domain of the entity.
+#- broker: The name or IP address of the broker.
+#- port: The port number of the broker.
+#- qos: The quality of service level for message delivery.
+#- my_loc: The location of the broker (used for advanced advertisements with geoqueries).
+#- bypass_existence_check (optional): Flag to bypass the existence check of the entity (default: 0).
+#- client (optional): MQTT client object (default: mqtt.Client(clean_session=True)).
+# Returns: None
 def post_entity(data,my_area,broker,port,qos,my_loc,bypass_existence_check=0,client=mqtt.Client(clean_session=True)):
     
 
@@ -44,27 +64,23 @@ def post_entity(data,my_area,broker,port,qos,my_loc,bypass_existence_check=0,cli
 
     client.loop_start()     
     if 'type' in data:
-        #print("\ntype:", data['type'])
         typee=str(data['type'])
     else:
         print("Error, ngsi-ld entity without a type \n")
         sys.exit(2)
-    if 'id' in data:
-            #print("\nid:", data['id'])
+    if 'id' in data:  
         id=str(data['id'])
     else:
         print("Error, ngsi-ld entity without a id \n")
         sys.exit(2)
     if '@context' in data:
-        #temp= str(data['@context']).split(",")
-        #context=str(temp[0])
         if( str(type(data["@context"]))=="<class 'str'>"):
             context=data['@context'].replace("/", "§")
         else:
             context=data['@context'][0].replace("/", "§")
 
         
-        #print("\n@context:", data['@context'])
+        
     else:    
         print("Error, ngsi-ld entity without context \n")
         sys.exit(2)
@@ -75,22 +91,19 @@ def post_entity(data,my_area,broker,port,qos,my_loc,bypass_existence_check=0,cli
     
     big_topic=my_area+'/entities/'+context+'/'+typee+'/LNA/'+id     
 
-    #print(data)    
-    #print(big_topic)
+ 
     check_topic='+/entities/'+context+'/'+typee+'/+/'+id+'/#' 
     print("Show me the check topic" + check_topic)
     print("Checking existence of entity...")
     
-    #result=((check_existence(broker,port,check_topic))
-    #print(str(result))
+   
     if(bypass_existence_check==0):
         if (check_existence(broker,port,check_topic)!=False):
             print("Error entity with this id already exists, did you mean to patch?")
             return
 
-    #check for remote existance
+    #check for remote existance maybe in the future
       
-
     ################### CREATE SMALL TOPICS!!!!!!!!!!!!!!!#######################
     for key in data.items():
         if key[0]!="type" and key[0]!="id" and key[0]!='@context':
@@ -127,16 +140,23 @@ def post_entity(data,my_area,broker,port,qos,my_loc,bypass_existence_check=0,cli
         client.publish(special_context_provider_broadcast,"Provider Message: { CreatedAt:" + str(time_rels["createdAt"]) +",location:" + str(my_loc)+"}" ,retain=True,qos=2)
 
         print("Publishing message to provider table")  
+        #old logging of published messages
         #logger = logging.getLogger()
         #handler = logging.FileHandler('logfile_advertisement_published.log')
         #logger.addHandler(handler)
         #logger.error(time.time_ns()/(10**6))
 
         print(special_context_provider_broadcast)        
-
-    #time.sleep(4) # wait
-     #stop the loop
     client.loop_stop()
+
+
+#Description: This function checks if an entity or advertisement already exists inside the broker.
+#Parameters:
+#- broker: The name or IP address of the broker.
+#- port: The port number of the broker.
+#- topic: The topic name or identifier of the message to check.
+#Returns:
+#- True if the entity/advertisement exists in the broker, False otherwise.
 
 def check_existence(broker,port,topic):
     run_flag=TRUE
@@ -147,14 +167,13 @@ def check_existence(broker,port,topic):
 
     # The callback for when a PUBLISH message is received from the server.
     def on_message(client3, userdata, msg):
-        #print("yeah I found it")
         global exists_topic
         nonlocal exists
         nonlocal expires
         exists=True
         exists_topic=msg.topic
         expires-=1
-        #print('\n topic:' +msg.topic+'\n message:'+ json.dumps(str(msg.payload), indent=2)) 
+    
     client3 = mqtt.Client()   
     
     client3.on_connect = on_connect
@@ -175,795 +194,818 @@ def check_existence(broker,port,topic):
         pass
     #time.sleep(1)
     client3.loop_stop()  
-    print(exists)
+    #print(exists)
     return exists    
 
 
+# Function: GET
+# Description: This function is used to retrieve entities from the ComDeX node, similar to the NGSI-LD GET entities operation.
+# Parameters:
+#   - broker: The name or IP address of the broker.
+#   - port: The port number of the broker.
+#   - topics: A list of topics to subscribe to.
+#   - expires: The expiration time in seconds.
+#   - qos: The quality of service level for message delivery.
+#   - limit (optional): The maximum number of entities to retrieve (default: 2000).
+# Returns:
+#   - A list of received messages (entities) ordered via their id.
 
-def GET(broker,port,topics,expires,qos,limit=2000):
-    run_flag=True
-    messagez=[]
-    messages_by_id={}
-    
+def GET(broker, port, topics, expires, qos, limit=2000):
+    run_flag = True
+    messagez = []
+    messages_by_id = {}
+
     # The callback for when a PUBLISH message is received from the server.
     def on_message(client, userdata, msg):
         nonlocal messagez
         nonlocal expires
         nonlocal messages_by_id
         nonlocal limit
-        #print('\n topic:' +msg.topic+'\n message:'+ json.dumps(str(msg.payload), indent=2))
-        if (msg.retain==1):
-            initial_topic=(msg.topic).split('/')
-            id=initial_topic[-2]
-            messages_by_id.setdefault(id,[]).append(msg)
-            #print(len(messages_by_id))
-            if(len(messages_by_id)==limit+1):
-                expires-=10000000
-            else:    
+        if msg.retain == 1:
+            initial_topic = msg.topic.split('/')
+            id = initial_topic[-2]
+            messages_by_id.setdefault(id, []).append(msg)
+            if len(messages_by_id) == limit + 1:
+                expires -= 10000000
+            else:
                 messagez.append(msg)
-                expires+=0.5
-            
-        #print(messagez)
-        #pprint.pprint('\n'+msg.topic+str(msg.payload))
+                expires += 0.5
 
+    # Create an MQTT client
     client = mqtt.Client()
-    #client.on_connect = on_connect
     client.on_message = on_message
     client.connect(broker, port)
-    
+
     client.loop_start()
+
+    # Subscribe to the specified topics
     for topic in topics:
-        client.subscribe(topic,qos)
-        #print("Subscribing to topic: " +topic)
-    
-    start=time.perf_counter()
+        client.subscribe(topic, qos)
+
+    start = time.perf_counter()
 
     try:
         while run_flag:
-        ##temp for testing
-        #print("in main loop")
-            tic_toc=time.perf_counter()
-            if (tic_toc-start) > expires:
-                run_flag=False
+            tic_toc = time.perf_counter()
+            if tic_toc - start > expires:
+                run_flag = False
     except:
         pass
-    
+
     client.loop_stop()
-    return(messagez)
+
+    # Return the received messages (entities)
+    return messagez
 
 
-def recreate_single_entity(messagez,query='',topics='',timee='',georel='',geometry='',coordinates='',geoproperty='',context_given=''):
-    query_flag_passed=False
-    subqueries_flags={}
-    default_context="https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld"
-    #print(messagez[0].topic)
-    initial_topic=(messagez[0].topic).split('/')
-    id=initial_topic[-2]
-    typee=initial_topic[-4]
-        
-    context=initial_topic[-5]
-    
-    context=context.replace("§", "/")
-    context_text=context
-    contextt=[]
+# Function: recreate_single_entity
+# Description: This function recreates a single entity from the received messages based on the specified query conditions.
+# This is possible because each entity has a unique message id, which is used as the catalyst for the entity reconstruction from
+# its various attribute messages
+# Parameters:
+#   - messagez: List of received messages (entities).
+#   - query: Query condition to filter the entities (optional, default: '').
+#   - topics: Topic filters to apply (optional, default: '').
+#   - timee: Time condition to filter the entities (optional, default: '').
+#   - georel: Geo-relation condition to filter the entities (optional, default: '').
+#   - geometry: Geometry type for the geospatial condition (optional, default: '').
+#   - coordinates: Coordinates for the geospatial condition (optional, default: '').
+#   - geoproperty: Geospatial property for the geospatial condition (optional, default: '').
+#   - context_given: Context value for entity comparison (optional, default: '').
+# Returns: None
+
+def recreate_single_entity(messagez, query='', topics='', timee='', georel='', geometry='', coordinates='', geoproperty='', context_given=''):
+    query_flag_passed = False
+    subqueries_flags = {}
+    default_context = "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld"
+
+    # Extract initial topic information
+    initial_topic = (messagez[0].topic).split('/')
+    id = initial_topic[-2]
+    typee = initial_topic[-4]
+    context = initial_topic[-5]
+    context = context.replace("§", "/")
+    context_text = context
+    contextt = []
     contextt.append(context_text)
-    if(context_text!=default_context):
+
+    # Add default context if it differs from the specified context
+    if context_text != default_context:
         contextt.append(default_context)
+
+    # Initialize data dictionary with ID and type
     data = {}
     data['id'] = id
-    data['type']=typee
+    data['type'] = typee
 
-    #print(context_text)       
-    if(context_given=='+'):
+    # Check if a specific context is given for comparison
+    if context_given == '+':
         with urllib.request.urlopen(context_text) as url:
             data_from_web = json.loads(url.read().decode())
-            #print(data_from_web)
-        try: 
-            data['type']=data_from_web["@context"][typee]
+        try:
+            data['type'] = data_from_web["@context"][typee]
         except:
-            dummy_command="This is a dummy command for except"                
-    
-    if(query==''):
+            dummy_command = "This is a dummy command for except"
 
+    if query == '':
         for msg in messagez:
-            #data[msg.topic[-1]]=str(msg.payload)
-            attr_str=msg.payload
-            attr_str=attr_str.decode(encoding = 'UTF-8',errors = 'strict')
-            
-            #attr_str=str(msg.payload)[1:]
-            attr_str=attr_str.replace("\'","\"")
-            #attr_str=attr_str[1:-1]
-            #attr_str=attr_str.replace("\'","\"")
+            attr_str = msg.payload
+            attr_str = attr_str.decode(encoding='UTF-8', errors='strict')
+            attr_str = attr_str.replace("\'", "\"")
+            data2 = json.loads(attr_str)
+            topic = (msg.topic).split('/')
 
-            #print(attr_str)
-            data2=json.loads(attr_str)
-            #data3=json.loads(data2)
-            topic=(msg.topic).split('/')
-            j=0
-            #for key in data2:
-                #print(key)
-            if(context_given=='+'):
-                try: 
-                    topic[-1]=data_from_web["@context"][topic[-1]]
-                except:
-                    dummy_cdommand="This is a dummy command for except"
-                       
-
-                #topic[-1]=str(data_from_web[0][topic[-1]])
-            if(georel!=''):
+            # Check geospatial condition if specified
+            if georel != '':
                 if topic[-1] == geoproperty:
-                    geo_type=str(data2["value"]["type"])   
-                    geo_coord=str(data2["value"]["coordinates"])
-                    geo_ok=0
-                    
-                    geo_type=geo_type.replace(" ", "")
-                    geo_coord=geo_coord.replace(" ","")
-                    coordinates=coordinates.replace(" ","")
+                    geo_type = str(data2["value"]["type"])
+                    geo_coord = str(data2["value"]["coordinates"])
+                    geo_ok = 0
 
-                    geo_entity=shape_geo.shape((data2["value"]))
+                    geo_type = geo_type.replace(" ", "")
+                    geo_coord = geo_coord.replace(" ", "")
+                    coordinates = coordinates.replace(" ", "")
 
-                    if(geometry=="Point"):
-                        query_gjson=shape_geo.Point(json.loads(coordinates))
-                    elif(geometry=="LineString"):
-                        query_gjson=shape_geo.LineString(json.loads(coordinates))
-                    elif(geometry=="Polygon"): 
-                        query_gjson=shape_geo.Polygon(json.loads(coordinates))
-                    elif(geometry=="MultiPoint"):
-                        query_gjson=shape_geo.MultiPoint(json.loads(coordinates))
-                    elif(geometry=="MultiLineString"):
-                        query_gjson=shape_geo.MultiLineString(json.loads(coordinates)) 
-                    elif(geometry=="MultiPolygon"): 
-                        query_gjson=shape_geo.MultiPolygon(json.loads(coordinates))   
+                    geo_entity = shape_geo.shape((data2["value"]))
 
-                    #print(geo_entity)
-                    #print(query_gjson)                            
+                    if geometry == "Point":
+                        query_gjson = shape_geo.Point(json.loads(coordinates))
+                    elif geometry == "LineString":
+                        query_gjson = shape_geo.LineString(json.loads(coordinates))
+                    elif geometry == "Polygon":
+                        query_gjson = shape_geo.Polygon(json.loads(coordinates))
+                    elif geometry == "MultiPoint":
+                        query_gjson = shape_geo.MultiPoint(json.loads(coordinates))
+                    elif geometry == "MultiLineString":
+                        query_gjson = shape_geo.MultiLineString(json.loads(coordinates))
+                    elif geometry == "MultiPolygon":
+                        query_gjson = shape_geo.MultiPolygon(json.loads(coordinates))
 
-                    if(georel=="equals"):
-                        if(geo_entity.equals(query_gjson)):
-                            geo_ok=1
-                        else:
-                            return    
-                    elif(georel=="within"):
-                        if(geo_entity.within(query_gjson)):
-                            geo_ok=1
+                    # Check specific georelation condition
+                    if georel == "equals":
+                        if geo_entity.equals(query_gjson):
+                            geo_ok = 1
                         else:
                             return
-                    elif(georel=="intersects"):
-                        if(geo_entity.intersects(query_gjson)):
-                            geo_ok=1
+                    elif georel == "within":
+                        if geo_entity.within(query_gjson):
+                            geo_ok = 1
                         else:
                             return
-                    elif(re.search("near;",georel)):
-                        
-                        near_query=georel.split(';')
-                        
-                        near_operator=re.findall('[><]|==|>=|<=', near_query[1])
-                        near_geo_queries=(re.split('[><]|==|>=|<=', near_query[1]))
-                        
-                        
-                        if(str(near_geo_queries[0])=="maxDistance"):
-                            if(str(near_operator[0])=="=="):
-                                if(geo_entity.distance(query_gjson)>float(near_geo_queries[1])):
+                    elif georel == "intersects":
+                        if geo_entity.intersects(query_gjson):
+                            geo_ok = 1
+                        else:
+                            return
+                    elif re.search("near;", georel):
+                        near_query = georel.split(';')
+                        near_operator = re.findall('[><]|==|>=|<=', near_query[1])
+                        near_geo_queries = (re.split('[><]|==|>=|<=', near_query[1]))
+
+                        if str(near_geo_queries[0]) == "maxDistance":
+                            if str(near_operator[0]) == "==":
+                                if geo_entity.distance(query_gjson) > float(near_geo_queries[1]):
                                     return
-                        elif(str(near_geo_queries[0])=="minDistance"):
-                            if(str(near_operator[0])=="=="):
-                                if(geo_entity.distance(query_gjson)<float(near_geo_queries[1])):
-                                    return         
-                    elif(georel=="contains"):
-                        if(geo_entity.contains(query_gjson)):
-                            geo_ok=1
+                        elif str(near_geo_queries[0]) == "minDistance":
+                            if str(near_operator[0]) == "==":
+                                if geo_entity.distance(query_gjson) < float(near_geo_queries[1]):
+                                    return
+                    elif georel == "contains":
+                        if geo_entity.contains(query_gjson):
+                            geo_ok = 1
                         else:
                             return
-                    elif(georel=="disjoint"):
-                        if(geo_entity.disjoint(query_gjson)):
-                            geo_ok=1
+                    elif georel == "disjoint":
+                        if geo_entity.disjoint(query_gjson):
+                            geo_ok = 1
                         else:
                             return
-                    elif(georel=="overlaps"):
-                        if(geo_entity.overlaps(query_gjson)):
-                            geo_ok=1
+                    elif georel == "overlaps":
+                        if geo_entity.overlaps(query_gjson):
+                            geo_ok = 1
                         else:
-                            return               
+                            return
 
-
-            if(topics!='' and topics!="#"):
+            # Check topic filters if specified
+            if topics != '' and topics != "#":
                 if topic[-1] in topics:
-                    data[topic[-1]]=data2
+                    data[topic[-1]] = data2
                 if topic[-1].endswith("_CreatedAt") or topic[-1].endswith("_modifiedAt"):
-                    if(timee!=''):
-                        time_topic=(topic[-1].split('_timerelsystem_'))
-
-                        if(context_given=='+'):
+                    if timee != '':
+                        time_topic = (topic[-1].split('_timerelsystem_'))
+                        if context_given == '+':
                             try:
-                                time_topic[-2]=data_from_web["@context"][time_topic[-2]]
+                                time_topic[-2] = data_from_web["@context"][time_topic[-2]]
                             except:
-                                dummy_command="This is a dummy command for except"    
+                                dummy_command = "This is a dummy command for except"
 
-                        #where_it_ends=len(data[time_topic[-2]])
-                        
-                        data[time_topic[-2]][time_topic[-1]]=data2    
+                        data[time_topic[-2]][time_topic[-1]] = data2
 
             else:
                 if topic[-1].endswith("_CreatedAt") or topic[-1].endswith("_modifiedAt"):
-                    if(timee!=''):
-                        time_topic=(topic[-1].split('_timerelsystem_'))
-                        
-                        if(context_given=='+'):
+                    if timee != '':
+                        time_topic = (topic[-1].split('_timerelsystem_'))
+                        if context_given == '+':
                             try:
-                                time_topic[-2]=data_from_web["@context"][time_topic[-2]]
+                                time_topic[-2] = data_from_web["@context"][time_topic[-2]]
                             except:
-                                dummy_command="This is a dummy command for except"   
-                        #where_it_ends=len(data[time_topic[-2]])
-                        
-                        data[time_topic[-2]][time_topic[-1]]=data2
-                    
-                else:    
-                    data[topic[-1]]=data2       
-                #j+=1
-                #j+=1
-        data['@context']=contextt    
+                                dummy_command = "This is a dummy command for except"
 
-        json_data = json.dumps(data,indent=4,ensure_ascii=False)    
-    
-        print(json_data) 
-    elif(query!=''):
-        logical_operators=re.findall('[;|()]',query)
-        queries_big=re.split(('[;|()]'),query)
-        #print(logical_operators)
-        #print(queries_big)
+                        data[time_topic[-2]][time_topic[-1]] = data2
+                else:
+                    data[topic[-1]] = data2
+
+        data['@context'] = contextt
+
+        json_data = json.dumps(data, indent=4, ensure_ascii=False)
+        print(json_data)
+
+    elif query != '':
+        logical_operators = re.findall('[;|()]', query)
+        queries_big = re.split(('[;|()]'), query)
 
         for msg in messagez:
-            #data[msg.topic[-1]]=str(msg.payload)
-            attr_str=msg.payload
-            attr_str=attr_str.decode(encoding = 'UTF-8',errors = 'strict')
-            
-            #attr_str=str(msg.payload)[1:]
-            attr_str=attr_str.replace("\'","\"")
-            #attr_str=attr_str[1:-1]
-            
-            
+            attr_str = msg.payload
+            attr_str = attr_str.decode(encoding='UTF-8', errors='strict')
+            attr_str = attr_str.replace("\'", "\"")
+            data2 = json.loads(attr_str)
+            topic = (msg.topic).split('/')
 
-            #print(attr_str)
-            data2=json.loads(attr_str)
-            #print(str(msg.topic))
-            topic=(msg.topic).split('/')
-
-            if(context_given=='+'):
-                try: 
-                    topic[-1]=data_from_web["@context"][topic[-1]]
-                except:
-                    dummy_command="This is a dummy command for except"
-        
-            #print(data2["value"])
-            if(georel!=''):
+            # Check geospatial condition if specified
+            if georel != '':
                 if topic[-1] == geoproperty:
-                    geo_type=str(data2["value"]["type"])   
-                    geo_coord=str(data2["value"]["coordinates"])
-                    geo_ok=0
-                    
-                    geo_type=geo_type.replace(" ", "")
-                    geo_coord=geo_coord.replace(" ","")
-                    coordinates=coordinates.replace(" ","")
+                    geo_type = str(data2["value"]["type"])
+                    geo_coord = str(data2["value"]["coordinates"])
+                    geo_ok = 0
 
-                    geo_entity=shape_geo.shape((data2["value"]))
+                    geo_type = geo_type.replace(" ", "")
+                    geo_coord = geo_coord.replace(" ", "")
+                    coordinates = coordinates.replace(" ", "")
 
-                    if(geometry=="Point"):
-                        query_gjson=shape_geo.Point(json.loads(coordinates))
-                    elif(geometry=="LineString"):
-                        query_gjson=shape_geo.LineString(json.loads(coordinates))
-                    elif(geometry=="Polygon"): 
-                        query_gjson=shape_geo.Polygon(json.loads(coordinates))
-                    elif(geometry=="MultiPoint"):
-                        query_gjson=shape_geo.MultiPoint(json.loads(coordinates))
-                    elif(geometry=="MultiLineString"):
-                        query_gjson=shape_geo.MultiLineString(json.loads(coordinates)) 
-                    elif(geometry=="MultiPolygon"): 
-                        query_gjson=shape_geo.MultiPolygon(json.loads(coordinates))   
+                    geo_entity = shape_geo.shape((data2["value"]))
 
-                    #print(geo_entity)
-                    #print(query_gjson)                            
+                    if geometry == "Point":
+                        query_gjson = shape_geo.Point(json.loads(coordinates))
+                    elif geometry == "LineString":
+                        query_gjson = shape_geo.LineString(json.loads(coordinates))
+                    elif geometry == "Polygon":
+                        query_gjson = shape_geo.Polygon(json.loads(coordinates))
+                    elif geometry == "MultiPoint":
+                        query_gjson = shape_geo.MultiPoint(json.loads(coordinates))
+                    elif geometry == "MultiLineString":
+                        query_gjson = shape_geo.MultiLineString(json.loads(coordinates))
+                    elif geometry == "MultiPolygon":
+                        query_gjson = shape_geo.MultiPolygon(json.loads(coordinates))
 
-                    if(georel=="equals"):
-                        if(geo_entity.equals(query_gjson)):
-                            geo_ok=1
-                        else:
-                            return    
-                    elif(georel=="within"):
-                        if(geo_entity.within(query_gjson)):
-                            geo_ok=1
+                    # Check specific georelation condition
+                    if georel == "equals":
+                        if geo_entity.equals(query_gjson):
+                            geo_ok = 1
                         else:
                             return
-                    elif(georel=="intersects"):
-                        if(geo_entity.intersects(query_gjson)):
-                            geo_ok=1
+                    elif georel == "within":
+                        if geo_entity.within(query_gjson):
+                            geo_ok = 1
                         else:
                             return
-                    elif(re.search("near;",georel)):
-                        
-                        near_query=georel.split(';')
-                        
-                        near_operator=re.findall('[><]|==|>=|<=', near_query[1])
-                        near_geo_queries=(re.split('[><]|==|>=|<=', near_query[1]))
-                        
-                        
-                        if(str(near_geo_queries[0])=="maxDistance"):
-                            if(str(near_operator[0])=="=="):
-                                if(geo_entity.distance(query_gjson)>float(near_geo_queries[1])):
+                    elif georel == "intersects":
+                        if geo_entity.intersects(query_gjson):
+                            geo_ok = 1
+                        else:
+                            return
+                    elif re.search("near;", georel):
+                        near_query = georel.split(';')
+                        near_operator = re.findall('[><]|==|>=|<=', near_query[1])
+                        near_geo_queries = (re.split('[><]|==|>=|<=', near_query[1]))
+
+                        if str(near_geo_queries[0]) == "maxDistance":
+                            if str(near_operator[0]) == "==":
+                                if geo_entity.distance(query_gjson) > float(near_geo_queries[1]):
                                     return
-                        elif(str(near_geo_queries[0])=="minDistance"):
-                            if(str(near_operator[0])=="=="):
-                                if(geo_entity.distance(query_gjson)<float(near_geo_queries[1])):
-                                    return         
-                    elif(georel=="contains"):
-                        if(geo_entity.contains(query_gjson)):
-                            geo_ok=1
+                        elif str(near_geo_queries[0]) == "minDistance":
+                            if str(near_operator[0]) == "==":
+                                if geo_entity.distance(query_gjson) < float(near_geo_queries[1]):
+                                    return
+                    elif georel == "contains":
+                        if geo_entity.contains(query_gjson):
+                            geo_ok = 1
                         else:
                             return
-                    elif(georel=="disjoint"):
-                        if(geo_entity.disjoint(query_gjson)):
-                            geo_ok=1
+                    elif georel == "disjoint":
+                        if geo_entity.disjoint(query_gjson):
+                            geo_ok = 1
                         else:
                             return
-                    elif(georel=="overlaps"):
-                        if(geo_entity.overlaps(query_gjson)):
-                            geo_ok=1
+                    elif georel == "overlaps":
+                        if geo_entity.overlaps(query_gjson):
+                            geo_ok = 1
                         else:
-                            return               
-            
+                            return
 
-            #allowing for combination of logical queries
+            # Allowing combination of logical queries
             for query2 in queries_big:
-                operator=re.findall('[><]|==|>=|<=', query2)
-                queries=(re.split('[><]|==|>=|<=', query2))
-                
-                subqueries_flags.setdefault(queries[0],False)
-                
+                operator = re.findall('[><]|==|>=|<=', query2)
+                queries = (re.split('[><]|==|>=|<=', query2))
+                subqueries_flags.setdefault(queries[0], False)
 
-                if(queries[0]==topic[-1]):
+                if queries[0] == topic[-1]:
 
-                    if(str(operator[0])=="=="):
-                        
-                        if (isinstance(data2["value"],list)):
+                    if str(operator[0]) == "==":
+
+                        if isinstance(data2["value"], list):
                             for data3 in data2["value"]:
-                                if(data3==queries[1]):
-                                    subqueries_flags[queries[0]]=True
-                                    
-                        elif (data2["value"]==queries[1]):
-                            subqueries_flags[queries[0]]=True
-                    elif(queries[1].isnumeric()):        
-                        if(str(operator[0])==">"):
-                            if(float(data2["value"])>float(queries[1])):
-                                subqueries_flags[queries[0]]=True
-                        elif(str(operator[0])=="<"):
-                            if(float(data2["value"])<float(queries[1])):
-                                subqueries_flags[queries[0]]=True
-                        elif(str(operator[0])=="<="):
-                            if(float(data2["value"])<=float(queries[1])):
-                                subqueries_flags[queries[0]]=True
-                        elif(str(operator[0])==">="):
-                            if(float(data2["value"])>=float(queries[1])):
-                                subqueries_flags[queries[0]]=True            
-                
-            #data3=json.loads(data2)
-            
-            j=0
-            #for key in data2:
-                #print(key)
-             
+                                if data3 == queries[1]:
+                                    subqueries_flags[queries[0]] = True
 
-            if(topics!='' and topics!="#"):
+                        elif data2["value"] == queries[1]:
+                            subqueries_flags[queries[0]] = True
+                    elif queries[1].isnumeric():
+                        if str(operator[0]) == ">":
+                            if float(data2["value"]) > float(queries[1]):
+                                subqueries_flags[queries[0]] = True
+                        elif str(operator[0]) == "<":
+                            if float(data2["value"]) < float(queries[1]):
+                                subqueries_flags[queries[0]] = True
+                        elif str(operator[0]) == "<=":
+                            if float(data2["value"]) <= float(queries[1]):
+                                subqueries_flags[queries[0]] = True
+                        elif str(operator[0]) == ">=":
+                            if float(data2["value"]) >= float(queries[1]):
+                                subqueries_flags[queries[0]] = True
+
+            # Check topic filters if specified
+            if topics != '' and topics != "#":
                 if topic[-1] in topics:
-                    data[topic[-1]]=data2
+                    data[topic[-1]] = data2
                 if topic[-1].endswith("_CreatedAt") or topic[-1].endswith("_modifiedAt"):
-                    if(timee!=''):
-                        time_topic=(topic[-1].split('_timerelsystem_'))
-                        if(context_given=='+'):
+                    if timee != '':
+                        time_topic = (topic[-1].split('_timerelsystem_'))
+                        if context_given == '+':
                             try:
-                                time_topic[-2]=data_from_web["@context"][time_topic[-2]]
+                                time_topic[-2] = data_from_web["@context"][time_topic[-2]]
                             except:
-                                dummy_command="This is a dummy command for except"   
-                        #where_it_ends=len(data[time_topic[-2]])
-                        
-                        data[time_topic[-2]][time_topic[-1]]=data2    
+                                dummy_command = "This is a dummy command for except"
+
+                        data[time_topic[-2]][time_topic[-1]] = data2
 
             else:
                 if topic[-1].endswith("_CreatedAt") or topic[-1].endswith("_modifiedAt"):
-                    if(timee!=''):
-                        time_topic=(topic[-1].split('_timerelsystem_'))
-                        if(context_given=='+'):
+                    if timee != '':
+                        time_topic = (topic[-1].split('_timerelsystem_'))
+                        if context_given == '+':
                             try:
-                                time_topic[-2]=data_from_web["@context"][time_topic[-2]]
+                                time_topic[-2] = data_from_web["@context"][time_topic[-2]]
                             except:
-                                dummy_command="This is a dummy command for except"   
-                        #where_it_ends=len(data[time_topic[-2]])
-                        
-                        data[time_topic[-2]][time_topic[-1]]=data2
-                    
-                else:    
-                    data[topic[-1]]=data2         
-                #j+=1
-        data['@context']=contextt
+                                dummy_command = "This is a dummy command for except"
 
-        #print(subqueries_flags)
-        l=0
-        full_logical_equation=[]
-        subqueries_flags.pop('',None)
+                        data[time_topic[-2]][time_topic[-1]] = data2
+                else:
+                    data[topic[-1]] = data2
+
+        data['@context'] = contextt
+
+        l = 0
+        full_logical_equation = []
+        subqueries_flags.pop('', None)
         for results in subqueries_flags.values():
-
             full_logical_equation.append(str(results))
-            if(l<(len(logical_operators))):
-                if(logical_operators[l]!=''):
-                    if(logical_operators[l]==";"):
+            if l < (len(logical_operators)):
+                if logical_operators[l] != '':
+                    if logical_operators[l] == ";":
                         full_logical_equation.append('and')
-                    elif(logical_operators[l]=="|"):
+                    elif logical_operators[l] == "|":
                         full_logical_equation.append('or')
                     else:
                         full_logical_equation.append(logical_operators[l])
-                    if(l+1<(len(logical_operators)-1)):    
-                        while (logical_operators[l+1]!=';'and logical_operators[l+1]!='|'):
-                                l=l+1
-                                full_logical_equation.append(logical_operators[l])
+                    if l + 1 < (len(logical_operators) - 1):
+                        while logical_operators[l + 1] != ';' and logical_operators[l + 1] != '|':
+                            l = l + 1
+                            full_logical_equation.append(logical_operators[l])
 
-            l=l+1   
+            l = l + 1
 
-        #print(full_logical_equation)
-        #print(' '.join(full_logical_equation))
-        #print(eval(' '.join(full_logical_equation)))
-        query_flag_passed=eval(' '.join(full_logical_equation))
-        if(query_flag_passed==True):
-            json_data = json.dumps(data,indent=4,ensure_ascii=False)    
+        query_flag_passed = eval(' '.join(full_logical_equation))
+        if query_flag_passed == True:
+            json_data = json.dumps(data, indent=4, ensure_ascii=False)
             print(json_data)
-        #else:
-             #print("Entity with the specified id does not pass the query restrictions")
+        
                  
 
 
 
         
-def recreate_multiple_entities(messagez,query='',topics='',timee='',limit=2000,georel='',geometry='',coordinates='',geoproperty='',context_given=''):
+# Function: recreate_multiple_entities
+# Description: This function recreates multiple entities from the received messages based on the specified query conditions. It basically calls the 
+# recreate single entity command, over a list of MQTT messages, based on their id.
+# Parameters:
+#   - messagez: List of received messages (entities).
+#   - query: Query condition to filter the entities (optional, default: '').
+#   - topics: Topic filters to apply (optional, default: '').
+#   - timee: Time condition to filter the entities (optional, default: '').
+#   - limit: Maximum number of entities to recreate (optional, default: 2000).
+#   - georel: Geo-relation condition to filter the entities (optional, default: '').
+#   - geometry: Geometry type for the geospatial condition (optional, default: '').
+#   - coordinates: Coordinates for the geospatial condition (optional, default: '').
+#   - geoproperty: Geospatial property for the geospatial condition (optional, default: '').
+#   - context_given: Context value for entity comparison (optional, default: '').
+# Returns: None
 
-    messages_by_id={}
-    #seperate each message by id to recreate in the recreate single entity function
+def recreate_multiple_entities(messagez, query='', topics='', timee='', limit=2000, georel='', geometry='', coordinates='', geoproperty='', context_given=''):
+    messages_by_id = {}
+
+    # Separate each message by ID to recreate using the recreate_single_entity function
     for message in messagez:
-        initial_topic=(message.topic).split('/')
-        id=initial_topic[-2]
-        #print(message)
-        messages_by_id.setdefault(id,[]).append(message)
-    #print(messages_by_id)    
+        initial_topic = (message.topic).split('/')
+        id = initial_topic[-2]
+        messages_by_id.setdefault(id, []).append(message)
 
+    # Iterate over single entities and recreate them using recreate_single_entity function
     for single_entities in messages_by_id.values():
-        #print(single_entities)
-        recreate_single_entity(single_entities,query,topics,timee,georel,geometry,coordinates,geoproperty,context_given)
-        #countdown pagination limit
-        limit=limit-1 
-        if (limit==0):
-            break   
+        recreate_single_entity(single_entities, query, topics, timee, georel, geometry, coordinates, geoproperty, context_given)
+
+        # Countdown pagination limit
+        limit = limit - 1
+        if limit == 0:
+            break
 
 
 
 
         
 
-def multiple_subscriptions(entity_type_flag,watched_attributes_flag,entity_id_flag,area,context,truetype,true_id,expires,broker,port,qos,watched_attributes):
-    topic=[]
+# Function: multiple_subscriptions
+# Description: This function sets up multiple subscriptions based on the specified flags and parameters.
+# Parameters:
+#   - entity_type_flag: Flag indicating whether entity type is specified.
+#   - watched_attributes_flag: Flag indicating whether watched attributes are specified.
+#   - entity_id_flag: Flag indicating whether entity ID is specified.
+#   - area: Area value for the subscriptions.
+#   - context: Context value for the subscriptions.
+#   - truetype: Entity type value for the subscriptions.
+#   - true_id: Entity ID value for the subscriptions.
+#   - expires: Expiration time for the subscriptions.
+#   - broker: MQTT broker address.
+#   - port: MQTT broker port.
+#   - qos: Quality of Service level for the subscriptions.
+#   - watched_attributes: List of watched attributes for the subscriptions.
+# Returns: None
+
+def multiple_subscriptions(entity_type_flag, watched_attributes_flag, entity_id_flag, area, context, truetype, true_id, expires, broker, port, qos, watched_attributes):
+    topic = []
     
-    if(entity_type_flag==True and watched_attributes_flag==True and entity_id_flag==True):
+    if entity_type_flag and watched_attributes_flag and entity_id_flag:
+        # Subscribe to topics based on entity type, watched attributes, and entity ID
         for attr in watched_attributes:
-            topic.append(area+'/entities/'+context+'/'+truetype+'/+/'+true_id+'/'+attr)
-            #print(topic)
-    elif (entity_type_flag==True and entity_id_flag==True):
-        topic.append(area[0]+'/entities/'+context+'/'+truetype+'/+/'+true_id+'/#')
-    elif(watched_attributes_flag==True and entity_id_flag==True):
+            topic.append(area + '/entities/' + context + '/' + truetype + '/+/' + true_id + '/' + attr)
+    
+    elif entity_type_flag and entity_id_flag:
+        # Subscribe to topics based on entity type and entity ID
+        topic.append(area + '/entities/' + context + '/' + truetype + '/+/' + true_id + '/#')
+    
+    elif watched_attributes_flag and entity_id_flag:
+        # Subscribe to topics based on watched attributes and entity ID
         for attr in watched_attributes:
-            topic.append(area+'/entities/'+context+'/+/+/'+true_id+'/'+attr)
-            #print(topic)         
-    elif (entity_type_flag==True and watched_attributes_flag==True):
+            topic.append(area + '/entities/' + context + '/+/+/' + true_id + '/' + attr)
+    
+    elif entity_type_flag and watched_attributes_flag:
+        # Subscribe to topics based on entity type and watched attributes
         for attr in watched_attributes:
-            topic.append(area+'/entities/'+context+'/'+truetype+'/+/+/'+attr)
-                        #print(topic)
-    elif entity_type_flag==True:
-        topic.append(area+'/entities/'+context+'/'+truetype+'/#')
-                    #print(topic)
-    elif entity_id_flag==True:
-        topic.append(area+'/entities/'+context+'/+/+/'+true_id+'/#')    
-    elif watched_attributes_flag==True:
+            topic.append(area + '/entities/' + context + '/' + truetype + '/+/+/' + attr)
+    
+    elif entity_type_flag:
+        # Subscribe to topics based on entity type
+        topic.append(area + '/entities/' + context + '/' + truetype + '/#')
+    
+    elif entity_id_flag:
+        # Subscribe to topics based on entity ID
+        topic.append(area + '/entities/' + context + '/+/+/' + true_id + '/#')
+    
+    elif watched_attributes_flag:
+        # Subscribe to topics based on watched attributes
         for attr in watched_attributes:
-            topic.append(area+'/entities/'+context+'/+/+/+/'+attr)
-                        #print(topic)
+            topic.append(area + '/entities/' + context + '/+/+/+/' + attr)
+    
     else:
         print("Something has gone wrong, program did not find the topics to subscribe to!")
         sys.exit(2)
-            
-    subscribe(broker,port,topic,expires,qos,context_given=context)
+    
+    # Call the subscribe function with the generated topics
+    subscribe(broker, port, topic, expires, qos, context_given=context)
     
 
 
 
-def subscribe(broker,port,topics,expires,qos,context_given):
-    run_flag=True
+# Function: subscribe
+# Description: This function subscribes to MQTT topics and handles the received messages.
+# Parameters:
+#   - broker: MQTT broker address.
+#   - port: MQTT broker port.
+#   - topics: List of topics to subscribe to.
+#   - expires: Expiration time for the subscriptions.
+#   - qos: Quality of Service level for the subscriptions.
+#   - context_given: Context value for entity comparison.
+# Returns: None
+
+def subscribe(broker, port, topics, expires, qos, context_given):
+    run_flag = True
+
     # The callback for when the client receives a CONNACK response from the server.
     def on_connect(client, userdata, flags, rc):
-        print("Connected with result code "+str(rc))
+        print("Connected with result code " + str(rc))
 
     # The callback for when a PUBLISH message is received from the server.
     def on_message(client, userdata, msg):
-        #print(msg.payload)
-        if msg.payload.decode()!='':
-            stamp=time.time_ns()/(10**6)
-            #logger = logging.getLogger()
-            initial_topic=(msg.topic).split('/')
-            ids=initial_topic[-2]
-            tmp=msg.payload
-            attr_str=msg.payload
-            print(attr_str)
-            attr_str=attr_str.decode(encoding = 'UTF-8',errors = 'strict')
-                
-            attr_str=attr_str.replace("\'","\"")
-            
-            data2=json.loads(attr_str)
-            #print(data2)
-            
-            handler = logging.FileHandler('logfile_mqtt_notification_arrived.log')
-            #if (logger.hasHandlers()):
-            #    logger.handlers.clear()
-            #logger.addHandler(handler)
-            #logger.error(str(stamp - float(data2["value"])))
+        # Perform operations on received message
+        if msg.payload.decode() != '':
+            stamp = time.time_ns() / (10 ** 6)
+            initial_topic = (msg.topic).split('/')
+            ids = initial_topic[-2]
+            tmp = msg.payload
+            attr_str = msg.payload.decode(encoding='UTF-8', errors='strict')
+            attr_str = attr_str.replace("\'", "\"")
+            data2 = json.loads(attr_str)
 
+            #Older logging messages for experiments
+            # Logging the message arrival time difference
+            #handler = logging.FileHandler('logfile_mqtt_notification_arrived.log')
+            # logger.addHandler(handler)
+            # logger.error(str(stamp - float(data2["value"])))
 
-        if msg.payload.decode()!='':
-
-            messagez=[]
+        if msg.payload.decode() != '':
+            messagez = []
             messagez.append(msg)
             if msg.topic.endswith("_CreatedAt") or msg.topic.endswith("_modifiedAt"):
-                do_nothing=1
+                # Do nothing for special system time topics (ignore them, no temporal subscriptions)
+                do_nothing = 1
             else:
-                recreate_single_entity(messagez,timee=0,context_given=context_given)
+                # Recreate single entity based on the received message
+                recreate_single_entity(messagez, timee=0, context_given=context_given)
         else:
-            print("\n Message on topic:" + msg.topic + ", was deleted")               
-        #pprint.pprint('\n'+msg.topic+str(msg.payload))
-
-        
+            print("\n Message on topic:" + msg.topic + ", was deleted")
 
     client = mqtt.Client()
     client.on_connect = on_connect
     client.on_message = on_message
 
+    # Connect to MQTT broker
     client.connect(broker, port, keepalive=expires)
-    
+
     client.loop_start()
     for topic in topics:
-        client.subscribe(topic,qos)
+        client.subscribe(topic, qos)
         #print("Subscribing to topic: " +topic)
 
-    start=time.perf_counter()
+    start = time.perf_counter()
 
     try:
         while run_flag:
-        ##temp for testing
-        #print("in main loop")
-            tic_toc=time.perf_counter()
-            if (tic_toc-start) > expires:
-                run_flag=False
+            tic_toc = time.perf_counter()
+            if (tic_toc - start) > expires:
+                run_flag = False
     except:
         pass
-    
+
     print("Subscriptions expired, exiting.....")
-    # Blocking call that processes network traffic, dispatches callbacks and
-    # handles reconnecting.
-    # Other loop*() functions are available that give a threaded interface and a
-    # manual interface.
+    # Blocking call that processes network traffic, dispatches callbacks and handles reconnecting.
+    # Other loop*() functions are available that give a threaded interface and a manual interface.
     client.loop_stop()
 
-def subscribe_for_advertisement_notification(broker,port,topics,expires,qos,entity_type_flag,watched_attributes_flag,entity_id_flag,watched_attributes,true_id):
-    run_flag=True
-    advertisement_exists={}
-    jobs_to_terminate={}
-    
+# Function: subscribe_for_advertisement_notification
+# Description: This function sets up subscriptions for advertisement notifications based on the specified flags and parameters, basically to
+# find if a new advertisement of interest arrives while an intersted subscriber is active (so that the subscriber while also connect to the
+# new advertised source "on the fly").
+# Parameters:
+#   - broker: MQTT broker address.
+#   - port: MQTT broker port.
+#   - topics: List of topics to subscribe to for advertisement notifications.
+#   - expires: Expiration time for the subscriptions.
+#   - qos: Quality of Service level for the subscriptions.
+#   - entity_type_flag: Flag indicating whether entity type is specified.
+#   - watched_attributes_flag: Flag indicating whether watched attributes are specified.
+#   - entity_id_flag: Flag indicating whether entity ID is specified.
+#   - watched_attributes: List of watched attributes for the subscriptions.
+#   - true_id: Entity ID value for the subscriptions.
+# Returns: None
+
+def subscribe_for_advertisement_notification(broker, port, topics, expires, qos, entity_type_flag, watched_attributes_flag, entity_id_flag, watched_attributes, true_id):
+    run_flag = True
+    advertisement_exists = {}
+    jobs_to_terminate = {}
+
     # The callback for when the client receives a CONNACK response from the server.
     def on_connect(client, userdata, flags, rc):
-        print("Connected for advertisement notification with result code "+str(rc))
+        print("Connected for advertisement notification with result code " + str(rc))
 
     # The callback for when a PUBLISH message is received from the server.
     def on_message(client, userdata, msg):
-        print("MESSAGE advert HERE")
+        #print("MESSAGE advert HERE")
         print(msg.payload.decode())
-        if msg.payload.decode()!='':
-            #calculating at which time an interested subscriber received 
-            #an advertisement message that did not exist prior to its subscription
-            #logger = logging.getLogger()
-            #handler = logging.FileHandler('logfile_advertisement_arrived.log')
-            #logger.addHandler(handler)
-            #logger.error(time.time_ns()/(10**6))
-
+        if msg.payload.decode() != '':
+            # Calculate at which time an interested subscriber received an advertisement message
+            # that did not exist prior to its subscription
             nonlocal advertisement_exists
 
+            stamp = time.time_ns() / (10 ** 6)
 
-            stamp=time.time_ns()/(10**6)
-            
-            initial_topic=(msg.topic).split('/')
-            #print(initial_topic)
-            
-            initial_topic=(msg.topic).split('/')
-            broker_remote=initial_topic[1]
-            port_remote=int(initial_topic[2])
-            area_remote=initial_topic[3]
-            context=initial_topic[4]
-            truetype=initial_topic[5]
+            initial_topic = (msg.topic).split('/')
+            broker_remote = initial_topic[1]
+            port_remote = int(initial_topic[2])
+            area_remote = initial_topic[3]
+            context = initial_topic[4]
+            truetype = initial_topic[5]
 
-            topic2="provider/"+broker_remote+'/'+str(port_remote)+'/'+area_remote+'/'+context+'/'+truetype
-            attr_str=topic2
+            topic2 = "provider/" + broker_remote + '/' + str(port_remote) + '/' + area_remote + '/' + context + '/' + truetype
+            attr_str = topic2
             print(attr_str)
- 
 
-            if  topic2 in advertisement_exists.keys():
+            if topic2 in advertisement_exists.keys():
                 print("advertisement_already_exists")
-                return()
+                return ()
             else:
                 print("found_brand_new_advertisement")
-                advertisement_exists.setdefault(topic2,[])
-            
-            topic=[]
-            
-            context_providers_addresses=[]
-            context_providers_ports=[]
-            context_providers_areas=[]
-            number_of_threads=1
+                advertisement_exists.setdefault(topic2, [])
 
-            
+            topic = []
+
+            context_providers_addresses = []
+            context_providers_ports = []
+            context_providers_areas = []
+            number_of_threads = 1
+
             context_providers_addresses.append(initial_topic[1])
             context_providers_ports.append(initial_topic[2])
             context_providers_areas.append(initial_topic[3])
-            
+
             nonlocal jobs_to_terminate
             jobs = []
             for i in range(0, number_of_threads):
-                print("How many threads???")
-                process = multiprocessing.Process\
-                (target=multiple_subscriptions,args=(entity_type_flag,watched_attributes_flag,entity_id_flag,context_providers_areas[i],context,truetype,true_id,expires,context_providers_addresses[i],int(context_providers_ports[i]),qos,watched_attributes))
+                #print("How many threads???")
+                process = multiprocessing.Process(
+                    target=multiple_subscriptions,
+                    args=(
+                        entity_type_flag, watched_attributes_flag, entity_id_flag,
+                        context_providers_areas[i], context, truetype, true_id, expires,
+                        context_providers_addresses[i], int(context_providers_ports[i]), qos, watched_attributes
+                    )
+                )
                 jobs.append(process)
-                
+
             print(jobs)
-            jobs_to_terminate.setdefault(topic2,jobs)
-            jobs_to_terminate[topic2]=jobs
+            jobs_to_terminate.setdefault(topic2, jobs)
+            jobs_to_terminate[topic2] = jobs
             for j in jobs:
                 print(j)
                 j.start()
 
-            #for j in jobs:
-            #    j.join() 
-            #logger = logging.getLogger()
-            #handler = logging.FileHandler('logfile_mqtt_advert_installation_times.log')
-            #if (logger.hasHandlers()):
-            #    logger.handlers.clear()
-            #logger.addHandler(handler)
-            #logger.error(str(stamp - float(attr_str)))           
         else:
-            initial_topic=(msg.topic).split('/')
-            broker_remote=initial_topic[1]
-            port_remote=int(initial_topic[2])
-            area_remote=initial_topic[3]
-            context=initial_topic[4]
-            truetype=initial_topic[5]
+            initial_topic = (msg.topic).split('/')
+            broker_remote = initial_topic[1]
+            port_remote = int(initial_topic[2])
+            area_remote = initial_topic[3]
+            context = initial_topic[4]
+            truetype = initial_topic[5]
 
-            topic2="provider/"+broker_remote+'/'+str(port_remote)+'/'+area_remote+'/'+context+'/'+truetype
+            topic2 = "provider/" + broker_remote + '/' + str(port_remote) + '/' + area_remote + '/' + context + '/' + truetype
             print("Advertisement Deleted")
             advertisement_exists.pop(topic2, 1)
             print(jobs_to_terminate)
             for j in jobs_to_terminate[topic2]:
                 print(j)
-                #j.terminate()
                 j.kill()
-                "Process is being killed"
-        
-          
-       
-
-        
 
     client = mqtt.Client()
     client.on_connect = on_connect
     client.on_message = on_message
 
     client.connect(broker, port, keepalive=expires)
-    
+
     client.loop_start()
     for topic in topics:
-        client.subscribe(topic,qos)
-        print("Subscribing to topic: " +topic)
+        client.subscribe(topic, qos)
+        print("Subscribing to topic: " + topic)
 
-    start=time.perf_counter()
+    start = time.perf_counter()
 
     try:
         while run_flag:
-        ##temp for testing
-        #print("in main loop")
-            tic_toc=time.perf_counter()
-            if (tic_toc-start) > expires:
-                run_flag=False
+            tic_toc = time.perf_counter()
+            if (tic_toc - start) > expires:
+                run_flag = False
     except:
         pass
-    
+
     print("Subscriptions expired, exiting.....")
-    # Blocking call that processes network traffic, dispatches callbacks and
-    # handles reconnecting.
-    # Other loop*() functions are available that give a threaded interface and a
-    # manual interface.
-    client.loop_stop()  
+    client.loop_stop()
 
 
-#delete retained messages 
-def clear_retained(broker,port,retained): #accepts single topic or list
-    run_flag=True
-    expires=0.5
+# Function: clear_retained
+# Description: This function clears the retained messages on the specified topic(s).
+# Parameters:
+#   - broker: MQTT broker address.
+#   - port: MQTT broker port.
+#   - retained: Single topic or list of topics to clear retained messages from.
+# Returns: None
+
+def clear_retained(broker, port, retained):
+    run_flag = True
+    expires = 0.5
+
+    # The callback for when the client receives a CONNACK response from the server.
     def on_connect(client, userdata, flags, rc):
-        print("Connected with result code "+str(rc))
+        print("Connected with result code " + str(rc))
 
     # The callback for when a PUBLISH message is received from the server.
     def on_message(client, userdata, msg):
         nonlocal expires
-        #print('\n topic:' +msg.topic+'\n message:'+ json.dumps(str(msg.payload), indent=2))
-        if (msg.retain==1):
-            client2.publish(msg.topic,None,0,True)
-            print ("Clearing retained on topic -",msg.topic)
-            expires+=0.1  
-    
-        #pprint.pprint('\n'+msg.topic+str(msg.payload))
-    client = mqtt.Client() 
-    client2 = mqtt.Client()   
-    
+
+        if (msg.retain == 1):
+            # Publish a null message to clear the retained message
+            client2.publish(msg.topic, None, 0, True)
+            print("Clearing retained on topic -", msg.topic)
+            expires += 0.1
+
+    client = mqtt.Client()
+    client2 = mqtt.Client()
+
     client.on_connect = on_connect
     client2.on_connect = on_connect
     client.on_message = on_message
 
-    
     client.connect(broker, port)
-    client2.connect(broker,port)
+    client2.connect(broker, port)
     client.loop_start()
     client2.loop_start()
-    client.subscribe(retained,qos=1)
-    
-    start=time.perf_counter()
+    client.subscribe(retained, qos=1)
+
+    start = time.perf_counter()
     try:
         while run_flag:
-        ##temp for testing
-        #print("in main loop")
-            tic_toc=time.perf_counter()
-            if (tic_toc-start) > expires:
-                run_flag=False
+            tic_toc = time.perf_counter()
+            if (tic_toc - start) > expires:
+                run_flag = False
     except:
         pass
-    
-    client.loop_stop()
 
     client.loop_stop()
-    client2.loop_stop()        
+    client2.loop_stop()
 
 
-
-
-        
-
-
-#functions to see mqtt broker communication
+#debug functions to see mqtt broker communication
 ############
+# Function: on_message
+# Description: Callback function called when a message is received from the MQTT broker.
+# Parameters:
+#   - client: MQTT client instance.
+#   - userdata: Custom userdata provided by the client.
+#   - message: MQTT message object containing the received message.
+# Returns: None
+
 def on_message(client, userdata, message):
-    print("message received " ,str(message.payload.decode("utf-8")))
-    print("message topic=",message.topic)
-    print("message qos=",message.qos)
-    print("message retain flag=",message.retain)
-########################################
+    # Print the received message payload, topic, QoS, and retain flag
+    print("message received ", str(message.payload.decode("utf-8")))
+    print("message topic=", message.topic)
+    print("message qos=", message.qos)
+    print("message retain flag=", message.retain)
+
+# Function: on_log
+# Description: Callback function called when a log message is generated by the MQTT client.
+# Parameters:
+#   - client: MQTT client instance.
+#   - userdata: Custom userdata provided by the client.
+#   - level: Log level of the message.
+#   - buf: Log message string.
+# Returns: None
+
 def on_log(client, userdata, level, buf):
-    print("log: ",buf)
+    # Print the log message
+    print("log: ", buf)
 #########################################   
 
-#usage message
+
+
+
 def usage():
-    print("Usage message here! TBA")
+    print("\nUsage:")
+    print("python script_name.py [options]\n")
+    
+    print("Options:")
+    print("-h, --help                Show this help message and exit")
+    print("-c, --command             Provide the command, possible commands include [POST/entities,POST/Subscriptions,DELETE/entities/,PATCH/entities/,GET/entities/,entityOperations/delete,entityOperations/create,entityOperations/update,entityOperations/upsert]")
+    print("-f, --file                Specify the file to be used as input to the command")
+    print("-b, --broker_address      Specify the address of the MQTT broker of the ComDeX node")
+    print("-p, --port                Specify the port number of the MQTT broker of the ComDeX node")
+    print("-q, --qos                 Specify the Quality of Service level (0, 1, or 2) to be used for the specified command")
+    print("-H, --HLink               Specify the HLink, 'context link' to be used for the GET request")
+    print("-A, --singleidadvertisement Specify if single ID advertisement is to be used (use 1 for True), default is false")
+    
+    print("\nExample:")
+    print("python3 actionhandler.py -c POST/entities -f entitiy.ngsild -b localhost -p 1026 -q 1 -H HLink -A 0\n")
 
 
 
 
-#An ngsild compliant "broker" that utilises a running mosquitto broker
+#ComDeX is an ngsild compliant "broker" that utilises a running MQTT broker
+#Here is the main function where different functions are called mainly based on the selected by the user command.
 def main(argv):
     #command line arguments check
     try:
@@ -1006,10 +1048,6 @@ def main(argv):
             if (arg=="1"):
                 singleidadvertisement=True
            
-        
-           
-
-
     #Broker location awareness
     locations_file = open("broker_location_awareness.txt", "a+")
     locations_file.close()  
@@ -1026,11 +1064,8 @@ def main(argv):
         if loc in location_awareness:
             my_loc=location_awareness[loc]
     except:
-        print("No area or location was detected, stored for this broker")        
-    #print("The location I know is "+my_area)
-        
+        print("No area or location was detected/stored for this broker")        
 
-    
     if(command==''):
         print("No command found, exiting...")
         sys.exit()
@@ -1042,7 +1077,6 @@ def main(argv):
         client.on_message=on_message #attach function to callback
         print("connecting to broker")
         client.connect(broker,port) #connect to broker
-        #client.loop_start() #start the loop
         if file=='':
             usage()
             sys.exit(2)
@@ -1054,7 +1088,6 @@ def main(argv):
                 print("Can't parse the input file, are you sure it is valid json?")
                 sys.exit(2)    
         post_entity(data,my_area,broker,port,qos,my_loc,0,client)
-        #client.loop_stop()
        
     #CREATION OF SUBSRIPTIONS        
     elif command=='POST/Subscriptions':
@@ -1079,7 +1112,6 @@ def main(argv):
                 sys.exit(2)
                 
             if 'type' in data:
-                    #print("\ntype:", data['type'])
                 typee=str(data['type'])
                 if typee!="Subscription":
                     print('Subscription has invalid type: '+typee)
@@ -1088,26 +1120,19 @@ def main(argv):
                 print("Error, ngsi-ld Subscription without a type \n")
                 sys.exit(2)
             if 'id' in data:
-                    #print("\nid:", data['id'])
                 id=str(data['id'])
             else:
                 print("Error, ngsi-ld Subscription without a id \n")
                 sys.exit(2)
             if '@context' in data:
-                #temp= str(data['@context']).split(",")
-                #context=str(temp[0])
                 if( str(type(data["@context"]))=="<class 'str'>"):
                     context=data['@context'].replace("/", "§")
                 else:
                     context=data['@context'][0].replace("/", "§")
-        #print("\n@context:", data['@context'])
             else:
                 context='+'    
-                #print("Error, ngsi-ld Subscription without context \n")
-                #sys.exit(2)  
             if 'entities' in data:
                 info_entities=data['entities'][0]
-                #print(data['entities'][0]['type'])
                 if 'type' in info_entities:
                     truetype=str(info_entities["type"])
                     entity_type_flag=True
@@ -1137,11 +1162,8 @@ def main(argv):
             print("connecting to broker")
             client1.connect(broker,port) #connect to broker
             client1.loop_start() #start the loop
-            #print("Subscribing to the csourceregistration")
-            #client.subscribe(big_topic)
             print("Publishing message to topic")
             client1.publish(big_topic,str(data),qos=qos)
-            #time.sleep(4) # wait
             client1.loop_stop() #stop the loop
 
             area=[]
@@ -1161,9 +1183,6 @@ def main(argv):
                 trueid2='#'
             else:
                 trueid2=true_id    
-
-            #print(area)                                
-            #print("\n")
 
             messages_for_context=[]
             check_top=[]
@@ -1217,10 +1236,7 @@ def main(argv):
                     clear_retained(broker,port,special_context_provider_broadcast)
             else:
                 special_context_provider_broadcast= 'provider/' + broker + '/' +str(port) + '/'+my_area+'/' + HLink + '/' +tp +'/'+id
-                clear_retained(broker,port,special_context_provider_broadcast)
-                
-                
-                
+                clear_retained(broker,port,special_context_provider_broadcast)          
         else:
             if (HLink==''):
                 HLink='+'
@@ -1334,7 +1350,6 @@ def main(argv):
 
                 for key in data.items():
                     small_topic=my_area+'/entities/'+HLink+'/'+tp+'/'+loc+'/'+id+'/'+key[0]
-                    #print(small_topic)
                     print("Publishing message to subtopic")    
                     client.publish(small_topic,str(key[1]),retain=True,qos=qos)
 
@@ -1362,8 +1377,6 @@ def main(argv):
         id='+'
         attrs='#'
         query=''
-
-        #geovars
         geometry=''
         georel=''
         coordinates=''
@@ -1381,7 +1394,6 @@ def main(argv):
 
         command_parts = command.split("GET/entities/")
         command=command_parts[1]
-        #command = input("Please give me the GET/entities command parameters:  ")
         if(command[0]=="?"):
             command=command[1:]
         command_parts = command.split("&")
@@ -1405,12 +1417,10 @@ def main(argv):
 
             elif(current[0]=="time"):
                 timee=current[1]
-                #entity_time_flag=True
                 print("time detected")  
 
             elif(current[0]=="limit"):
                 limit=int(current[1])
-                #entity_time_flag=True
                 print("pagination limit detected")        
 
             elif(current[0]=="attrs"):
@@ -1448,8 +1458,7 @@ def main(argv):
             
         if(geovar_count!=0 and geovar_count!=3):
             print("Incomplete geoquery!")
-            return
-            #print(area)                                
+            return                                
             
         if(area==[]):
             area.append('+')
@@ -1465,7 +1474,6 @@ def main(argv):
                 typee="#"
 
             for z in area:
-                    #print(z)
                 if(singleidadvertisement==False):
                                    
                     check_topic2="provider/+/+/"+z+'/'+HLink+'/'+typee
@@ -1480,20 +1488,14 @@ def main(argv):
                 messages_for_context=GET(broker,port,check_top,0.1,1)
             if(typee=="#"):
                 typee="+"
-                #print(messages_for_context)
             context_providers_addresses=[]
             context_providers_ports=[]
             context_providers_areas=[]
             context_providers_full=[]
-                #number_of_threads=1
-            #print("area= "+ str(area))
+
             if (Forwarding==1):    
                 for messg in messages_for_context:
                     initial_topic=(messg.topic).split('/')
-                    #print(messg.payload)
-                    #context_provider_payload=json.loads(str(messg.payload))
-                    #print(context_provider_payload)
-                    #print(messg.topic)
                     
                     if (initial_topic[1]+initial_topic[2]+initial_topic[3]) in context_providers_full:
                         continue
@@ -1504,8 +1506,6 @@ def main(argv):
                     context_providers_areas.append(initial_topic[3])
                     context_providers_full.append(str(initial_topic[1]+initial_topic[2]+initial_topic[3]))
                     
-                        
-                    #print(attrs)
                     top=initial_topic[3]
                     if attrs!='#':
                         
@@ -1515,10 +1515,8 @@ def main(argv):
 
                     else:
                         top=initial_topic[3]+'/entities/'+HLink+'/'+typee+'/+/'+id+'/#'
-                        topic.append(top)
-                    #print(top)    
-                    messages=GET(initial_topic[1],int(initial_topic[2]),topic,0.5,1,limit)  
-                            #print(messages)
+                        topic.append(top) 
+                    messages=GET(initial_topic[1],int(initial_topic[2]),topic,0.5,1,limit)                              
                     if(messages!=[]):
                         recreate_multiple_entities(messages,query,attrs,timee=timee,limit=limit,georel=georel,geometry=geometry,coordinates=coordinates,geoproperty=geoproperty,context_given=HLink)            
             else:   
@@ -1542,7 +1540,6 @@ def main(argv):
                     detected=1
                     typee='+'
                     top=my_area+'/entities/'+HLink+'/+/+/'+id+'/#' 
-                    #print(top)
                     if (check_existence(broker,port,top)==False):
                         print("Entity with this id doesn't exist, no need for deletion")
                         detected=0
@@ -1552,9 +1549,6 @@ def main(argv):
                         print("Trying to delete content")
                         T1.join()
                         print("Content deletion complete")
-
-            
-            
                         tp=exists_topic.split("/")[-4]
                         top_check_for_advert=my_area+'/entities/'+HLink+'/'+tp+'/#'
                         
@@ -1573,14 +1567,10 @@ def main(argv):
                             T1.start()
                             print("Trying to delete content")
                             T1.join()
-                            print("Content deletion complete") 
-                           
+                            print("Content deletion complete")              
             except:
                 print("Couldn't completely parse the input file, are you sure it is valid json?")
                 sys.exit(2)    
-        
-        
-        #dosmthhere
     elif(re.search("entityOperations/create",command)):
         advertisement_exists={}
         print("creating new instance")
@@ -1588,7 +1578,6 @@ def main(argv):
         client.on_message=on_message #attach function to callback
         print("connecting to broker")
         client.connect(broker,port) #connect to broker
-        #client.loop_start() #start the loop
         if file=='':
             usage()
             sys.exit(2)
@@ -1621,7 +1610,6 @@ def main(argv):
         client.on_message=on_message #attach function to callback
         print("connecting to broker")
         client.connect(broker,port) #connect to broker
-        #client.loop_start() #start the loop
         if file=='':
             usage()
             sys.exit(2)
@@ -1633,15 +1621,13 @@ def main(argv):
                     post_entity(data,my_area,broker,port,qos,my_loc,1,client)
             except:
                 print("Couldn't completely parse the input file, are you sure it is valid json?")
-                sys.exit(2)
-        #client.loop_stop()        
+                sys.exit(2)        
     elif(re.search("entityOperations/upsert",command)):
         print("creating new instance")
         client = mqtt.Client(clean_session=True) #create new instance
         client.on_message=on_message #attach function to callback
         print("connecting to broker")
         client.connect(broker,port) #connect to broker
-        #client.loop_start() #start the loop
         if file=='':
             usage()
             sys.exit(2)
@@ -1655,11 +1641,13 @@ def main(argv):
             except:
                 print("Couldn't completely parse the input file, are you sure it is valid json?")
                 sys.exit(2)  
-        #lient.loop_stop()                        
+                              
            
 
                                                                    
-
+#Check if the script is being run directly
+#Retrieve command-line arguments passed to the script
+#Call the main function with the command-line arguments
 
 if __name__ == "__main__":
    main(sys.argv[1:])
