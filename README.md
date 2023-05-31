@@ -1,7 +1,10 @@
 # ComDeX Prototype Implementation
 
-<img src="https://www.google.com/url?sa=i&url=https%3A%2F%2Fwww.cidoc-crm.org%2Fics-forth&psig=AOvVaw2f0lXTxykJv5KjNNoACbxk&ust=1685618874310000&source=images&cd=vfe&ved=0CBEQjRxqFwoTCOjR5-G5n_8CFQAAAAAdAAAAABAJ" alt="logo1" width="300" height="200">
-<img src="https://upload.wikimedia.org/wikipedia/fr/thumb/1/1d/Logo_T%C3%A9l%C3%A9com_SudParis.svg/1200px-Logo_T%C3%A9l%C3%A9com_SudParis.svg.png" alt="logo2" width="300" height="200">
+<div style="display: flex;">
+  <img src="https://www.cidoc-crm.org/sites/default/files/ics-diskout-en.jpg" alt="logo1" width="300" height="200">
+  <img src="https://s3-eu-west-1.amazonaws.com/assets.atout-on-line.com/images/ingenieur/Logos_Ecoles/2018_2021/telecom_sudparis_300.jpg" alt="logo2" width="300" height="200">
+</div>
+
 
 A lightweight, federated NGSI-LD broker system that evolves Internet of Things (IoT) with MQTT at its core.
 
