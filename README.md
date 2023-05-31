@@ -1,5 +1,6 @@
 # ComDeX Prototype Implementation
-![ForthLogo](https://www.cidoc-crm.org/sites/default/files/ics-diskout-en.jpg) ![TelecomSudParisLogo](![image](https://github.com/SAMSGBLab/ComDeX/assets/10787842/c529f3a7-f804-42ab-a378-e6c6d82f013a))
+![ForthLogo](https://pbs.twimg.com/profile_images/1217106700802707457/rHnHFPeZ_400x400.jpg) 
+![TelecomSudParisLogo](https://upload.wikimedia.org/wikipedia/fr/thumb/1/1d/Logo_T%C3%A9l%C3%A9com_SudParis.svg/1200px-Logo_T%C3%A9l%C3%A9com_SudParis.svg.png)
 
 ## Overview
 ComDeX is a lightweight, federated NGSI-LD broker system that makes use of open-source MQTT brokers at its core. It was concepted originally as a simple test suite for using MQTT with [NGSI-LD](https://www.etsi.org/deliver/etsi_gs/CIM/001_099/009/01.01.01_60/gs_CIM009v010101p.pdf) and evolved over time to be a capable Internet of Things (IoT) platform.
