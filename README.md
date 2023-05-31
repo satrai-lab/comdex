@@ -1,12 +1,13 @@
 # ComDeX Prototype Implementation
 
 <div style="display: flex;">
-  <img src="https://www.cidoc-crm.org/sites/default/files/ics-diskout-en.jpg" alt="logo1" width="500" height="150">
+  <img src="https://www.cidoc-crm.org/sites/default/files/ics-diskout-en.jpg" alt="logo1" width="500" height="150" style="border-right: 2px solid #ccc; padding-right: 10px;">
   <img src="https://s3-eu-west-1.amazonaws.com/assets.atout-on-line.com/images/ingenieur/Logos_Ecoles/2018_2021/telecom_sudparis_300.jpg" alt="logo2" width="200" height="300">
 </div>
 
+This work is the result of combined research from [ICS-FORTH](https://www.ics.forth.gr/) and [Telecom SudParis](https://www.telecom-sudparis.eu/).
 
-A lightweight, federated NGSI-LD broker system that evolves Internet of Things (IoT).
+An agile and decentralized system designed for the dynamic evolution of the Internet of Things (IoT)
 
 - [Overview](#overview)
 - [How It Works](#how-it-works)
