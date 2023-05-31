@@ -1,12 +1,12 @@
 # ComDeX Prototype Implementation
 
 <div style="display: flex;">
-  <img src="https://www.cidoc-crm.org/sites/default/files/ics-diskout-en.jpg" alt="logo1" width="300" height="200">
-  <img src="https://s3-eu-west-1.amazonaws.com/assets.atout-on-line.com/images/ingenieur/Logos_Ecoles/2018_2021/telecom_sudparis_300.jpg" alt="logo2" width="300" height="200">
+  <img src="https://www.cidoc-crm.org/sites/default/files/ics-diskout-en.jpg" alt="logo1" width="500" height="150">
+  <img src="https://s3-eu-west-1.amazonaws.com/assets.atout-on-line.com/images/ingenieur/Logos_Ecoles/2018_2021/telecom_sudparis_300.jpg" alt="logo2" width="200" height="300">
 </div>
 
 
-A lightweight, federated NGSI-LD broker system that evolves Internet of Things (IoT) with MQTT at its core.
+A lightweight, federated NGSI-LD broker system that evolves Internet of Things (IoT).
 
 - [Overview](#overview)
 - [How It Works](#how-it-works)
@@ -57,7 +57,7 @@ To view the list of available command-line arguments and their usage, execute
 python3 action_handler.py -h.
 ```
 
-## Sanity Check
+### Sanity Check
 To do a quick sanity check that everything has been setup correctly you can do the following:
 In the same folder as "actionhandler.py" create 2 files:
   An entity example file, "entity_example.ngsild":
