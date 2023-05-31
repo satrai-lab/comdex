@@ -986,7 +986,7 @@ def on_log(client, userdata, level, buf):
 
 def usage():
     print("\nUsage:")
-    print("python script_name.py [options]\n")
+    print("python actionhandler.py [options]\n")
     
     print("Options:")
     print("-h, --help                Show this help message and exit")
@@ -999,7 +999,7 @@ def usage():
     print("-A, --singleidadvertisement Specify if single ID advertisement is to be used (use 1 for True), default is false")
     
     print("\nExample:")
-    print("python3 actionhandler.py -c POST/entities -f entitiy.ngsild -b localhost -p 1026 -q 1 -H HLink -A 0\n")
+    print("python3 actionhandler.py -c POST/entities -f entity.ngsild -b localhost -p 1026 -q 1 -H HLink -A 0\n")
 
 
 
