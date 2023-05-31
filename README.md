@@ -1,4 +1,5 @@
 # ComDeX Prototype Implementation
+![ForthLogo](https://www.cidoc-crm.org/sites/default/files/ics-diskout-en.jpg) ![TelecomSudParisLogo](![image](https://github.com/SAMSGBLab/ComDeX/assets/10787842/c529f3a7-f804-42ab-a378-e6c6d82f013a))
 
 ## Overview
 ComDeX is a lightweight, federated NGSI-LD broker system that makes use of open-source MQTT brokers at its core. It was concepted originally as a simple test suite for using MQTT with [NGSI-LD](https://www.etsi.org/deliver/etsi_gs/CIM/001_099/009/01.01.01_60/gs_CIM009v010101p.pdf) and evolved over time to be a capable Internet of Things (IoT) platform.
@@ -25,9 +26,9 @@ Our ComDeX prototype implementation is in Python but can be easily adapted to ot
 
 Here are the requirements you need for the installation:
 
-Python environment.
-An MQTT broker with capabilities for message persistence and creating MQTT bridges.
-Developers can leverage MQTT backup bridges offered by MQTT brokers to establish redundancy using backup advertisement links and data brokers/servers.
+- Python environment.
+- An MQTT broker with capabilities for message persistence and creating MQTT bridges.
+
 
 For the Action Handler, you'll need the following libraries:
 
@@ -52,7 +53,6 @@ To see the list of available command-line arguments and their use, run the actio
 ```
 python action_handler.py -h
 ```
-
 
 
 ## Limitations
