@@ -1,34 +1,42 @@
 # ComDeX Prototype Implementation
 
+<img src="https://www.google.com/url?sa=i&url=https%3A%2F%2Fwww.cidoc-crm.org%2Fics-forth&psig=AOvVaw2f0lXTxykJv5KjNNoACbxk&ust=1685618874310000&source=images&cd=vfe&ved=0CBEQjRxqFwoTCOjR5-G5n_8CFQAAAAAdAAAAABAJ" alt="logo1" width="300" height="200">
+<img src="https://upload.wikimedia.org/wikipedia/fr/thumb/1/1d/Logo_T%C3%A9l%C3%A9com_SudParis.svg/1200px-Logo_T%C3%A9l%C3%A9com_SudParis.svg.png" alt="logo2" width="300" height="200">
+
+A lightweight, federated NGSI-LD broker system that evolves Internet of Things (IoT) with MQTT at its core.
+
+- [Overview](#overview)
+- [How It Works](#how-it-works)
+- [Installation](#installation)
+- [Limitations](#limitations)
+- [Contribution](#contribution)
+- [Contact](#contact)
+- [Acknowledgements](#acknowledgements)
 
 ## Overview
-ComDeX is a lightweight, federated NGSI-LD broker system that makes use of open-source MQTT brokers at its core. It was concepted originally as a simple test suite for using MQTT with [NGSI-LD](https://www.etsi.org/deliver/etsi_gs/CIM/001_099/009/01.01.01_60/gs_CIM009v010101p.pdf) and evolved over time to be a capable Internet of Things (IoT) platform.
-Our prototype provides an alternative solution to existing heavyweight NGSI-LD brokers, which generally favour HTTP as a communication protocol. ComDeX provides end-to-end MQTT capabilities, such as QoS delivery guarantees, that aren't possible with these solutions.
 
-For more detailed information about the inner workings of our prototype as well as working examples, visit our wiki [link here TBA].
+ComDeX is a lightweight, federated NGSI-LD broker system that leverages open-source MQTT brokers. Initially conceived as a test suite for MQTT with [NGSI-LD](https://www.etsi.org/deliver/etsi_gs/CIM/001_099/009/01.01.01_60/gs_CIM009v010101p.pdf), it has evolved into a versatile Internet of Things (IoT) platform. Compared to traditional heavyweight NGSI-LD brokers favoring HTTP as a communication protocol, ComDeX offers end-to-end MQTT capabilities, including QoS delivery guarantees. For a deep dive into our prototype and working examples, refer to our wiki (link TBA).
 
 ## How It Works
 
-The ComDeX platform is a federation of ComDeX nodes.
-
-Each ComDeX node has two main key components: The Action Handler and an MQTT Broker.
+The ComDeX platform operates as a federation of ComDeX nodes, each consisting of two primary components: the Action Handler and an MQTT Broker.
 
 ### Action Handler
-The Action Handler is an API for various clients (producers/consumers) to conduct diverse "Actions". These "Actions" are defined as any operation inside the architecture that is necessary for the exchange of information between clients and the brokers.
-This component provides high-level functions for data context discovery, both synchronous and asynchronous. It is responsible for executing commands and managing data flows using various sub-components. Simply put, it's the thing that turns ComDeX into ComDeX. While the ComDeX architecture is not targeted torwards only NGSI-LD, for the implementation of the prototype, since NGSI-LD has been used, there has been an effort for the endpoints to be as much as possible NGSI-LD like
+
+The Action Handler is an API that enables various clients (producers/consumers) to perform diverse "Actions," defined as any operation within the architecture essential for information exchange between clients and brokers. This component facilitates data context discovery (both synchronous and asynchronous) and manages data flows. While ComDeX isn't strictly designed for NGSI-LD, our prototype implementation tries to adhere to NGSI-LD endpoints as closely as possible.
 
 ### MQTT Broker
-This is the core of each ComDeX node. Although we've extensively used Mosquitto for our testing, our solution is not limited to this particular MQTT broker. You can use any MQTT broker you prefer, as long as it offers the persistence of messages and creation of MQTT bridges, which are essential for federation.
+
+This component serves as the backbone of each ComDeX node. While Mosquitto is extensively used for testing, our solution isn't confined to this MQTT broker. You can use any MQTT broker, provided it supports message persistence and MQTT bridges creation—two critical features for federation.
 
 ## Installation
+
 ### Requirements
-Our ComDeX prototype implementation is in Python but can be easily adapted to other programming languages.
 
-Here are the requirements you need for the installation:
+Our ComDeX prototype implementation is written in Python, though it's easily adaptable to other programming languages.
 
-- Python environment.
-- An MQTT broker with capabilities for message persistence and creating MQTT bridges.
-
+- Python environment
+- MQTT broker supporting message persistence and MQTT bridges creation
 
 For the Action Handler, you'll need the following libraries:
 
@@ -36,37 +44,91 @@ For the Action Handler, you'll need the following libraries:
 paho-mqtt==1.6.1
 Shapely==1.8.1
 ```
-These are included in the requirements.txt file.
+These requirements are included in the requirements.txt file.
 
-How to Install Required Libraries
-To install the required libraries, you will need to run the following command in your terminal:
+### Installation Steps
+Install the required libraries with the command: pip install -r requirements.txt.
+To view the list of available command-line arguments and their usage, execute 
 
-```
-pip install -r requirements.txt
-```
-
-This command will install all the libraries listed in the requirements.txt file.
-
-Running the Action Handler
-To see the list of available command-line arguments and their use, run the action_handler.py with the -h flag.
-
-```
-python action_handler.py -h
+```python
+python3 action_handler.py -h.
 ```
 
+## Sanity Check
+To do a quick sanity check that everything has been setup correctly you can do the following:
+In the same folder as "actionhandler.py" create 2 files:
+  An entity example file, "entity_example.ngsild":
+  ```
+  {
+    "id": "urn:ngsi-ld:GtfsAgency:Malaga_EMT",
+    "type": "GtfsAgency",
+    "agencyName": {
+        "type": "Property",
+        "value": "Empresa Malague\u00f1a de Transportes"
+    },
+    "language": {
+        "type": "Property",
+        "value": "ES"
+    },
+    "page": {
+        "type": "Property",
+        "value": "http://www.emtmalaga.es/"
+    },
+    "source": {
+        "type": "Property",
+        "value": "http://datosabiertos.malaga.eu/dataset/lineas-y-horarios-bus-google-transit/resource/24e86888-b91e-45bf-a48c-09855832fd52"
+    },
+    "timezone": {
+        "type": "Property",
+        "value": "Europe/Madrid"
+    },
+    "@context": [
+    "https://smartdatamodels.org/context.jsonld",
+    "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld"
+    ]
+}
+  ```
+  And a subscription file, subscription_example.ngsild:
+  ```
+  {
+  "id": "urn:subscription:3",
+  "type": "Subscription",
+  "entities": [{
+                "type": "GtfsAgency"
+  }],
+  "watchedAttributes": ["agencyName","language"],
+  "@context": [
+    "https://smartdatamodels.org/context.jsonld",
+    "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld"
+    ]
+}
+  ```
+
+We are going to create an entity for which we have subscribed to some of its attributes.
+We can do this in any order we like (either publish before or after the subscription).
+Replace localhost and 1026 with the appropriate address and port of your MQTT broker.
+
+```
+sudo python3 actionhandler.py -c POST/Subscriptions -f subscription_example.ngsild -b localhost -p 1026
+sudo python3 actionhandler.py -c POST/entities -f entity_example.ngsild -b localhost -p 1026
+```
+You should be able to see the subscribed attributes printed/returned at your terminal
+
+You can also try "getting" the published entity, using the following command:
+```
+sudo python3 actionhandler.py -c GET/entities/?id=urn:ngsi-ld:GtfsAgency:Malaga_EMT -b localhost -p 1026
+```
 
 ## Limitations
-As a new system and an ongoing project, ComDeX is not a mature solution that has been thoroughly tested. Its current state reflects a prototype implementation of our original idea. The exact compliance with the NGSI-LD specification hasn't been tested.
+As a nascent system and an ongoing project, ComDeX isn't a mature solution yet and hasn't been thoroughly tested. It currently serves as a prototype implementation of our original idea, and the exact compliance with the NGSI-LD specification remains untested.
 
 ## Contribution
-Contributions are welcome. Please feel free to contribute by submitting a pull request.
-
+We heartily welcome contributions! Feel free to submit a pull request.
 
 ## Contact
-For any further questions, please feel free to reach us at [papadakni@ics.forth.gr].
+For further inquiries, feel free to reach us at [papadakni@ics.forth.gr].
 
 ## Acknowledgements
-This work is partly based on the [NGSI-LD specification](https://www.etsi.org/deliver/etsi_gs/CIM/001_099/009/01.01.01_60/gs_CIM009v010101p.pdf) developed by ETSI.
-We thankfully acknowledge funding for this research by the Greek RTDI Action “RESEARCH-CREATE-INNOVATE” (EΠA𝜈EK 2014-2020), Grant no. T2EΔK-02848 (SmartCityBus).
+This work is partly based on the NGSI-LD specification developed by ETSI. Our sincere thanks to the Greek RTDI Action “RESEARCH-CREATE-INNOVATE” (EΠA𝜈EK 2014-2020), Grant no. T2EΔK-02848 (SmartCityBus), for funding this research.
 
-Please note that the information in this README is subject to changes as the project evolves.
+Note: This README is subject to changes as the project progresses.
