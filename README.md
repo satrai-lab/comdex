@@ -58,6 +58,8 @@ To view the list of available command-line arguments and their usage, execute
 python3 action_handler.py -h.
 ```
 
+> Note: For complex setups with federations of ComDeX nodes, be sure to check both the wiki and the [DEMO](https://github.com/SAMSGBLab/ComDeX/tree/main/DEMO) folder of this repo. 
+
 ### Sanity Check
 To do a quick sanity check that everything has been setup correctly you can do the following:
 In the same folder as "actionhandler.py" create 2 files:
