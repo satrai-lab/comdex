@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en-us">
+<head><meta charset="utf-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Code Documentation - ComDeX Wiki</title>
+<meta name="description" content="ComDeX Demystified: A Complete Guide to Harnessing its Potential">
+<meta name="generator" content="Hugo 0.108.0">
+<link href="https://example.com/index.xml" rel="alternate" type="application/rss+xml">
+<link rel="canonical" href="https://example.com/prototype/documentation/">
+<link rel="stylesheet" href="https://example.com/css/theme.min.css">
+<link rel="stylesheet" href="https://example.com/css/chroma.min.css">
+<script defer src="https://example.com/js/fontawesome6/all.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jquery@3.6.0/dist/jquery.min.js" integrity="sha256-/xUj+3OJU5yExlq6GSYGSHk7tPXikynS7ogEvDej/m4=" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/jquery.easing@1.4.1/jquery.easing.min.js" integrity="sha256-H3cjtrm/ztDeuhCN9I4yh4iN2Ybx/y1RM7rMmAesA0k=" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/clipboard@2.0.11/dist/clipboard.min.js" integrity="sha256-4XodgW4TwIJuDtf+v6vDJ39FVxI0veC/kSCCmnFp7ck=" crossorigin="anonymous"></script>
+<script src="https://example.com/js/bundle.js"></script><style>
+:root {}
+</style>
+<meta property="og:title" content="Code Documentation" />
+<meta property="og:description" content="ComDeX Demystified: A Complete Guide to Harnessing its Potential" />
+<meta property="og:type" content="website" />
+<meta property="og:url" content="https://example.com/prototype/documentation/" /><meta property="og:image" content="https://example.com/images/og-image.png"/><meta property="og:site_name" content="Hugo Techdoc Theme" />
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://example.com/images/og-image.png"/>
+
+<meta name="twitter:title" content="Code Documentation"/>
+<meta name="twitter:description" content="ComDeX Demystified: A Complete Guide to Harnessing its Potential"/>
+<meta itemprop="name" content="Code Documentation">
+<meta itemprop="description" content="ComDeX Demystified: A Complete Guide to Harnessing its Potential"></head>
+<body><div class="container"><header>
+<h1>ComDeX Wiki</h1><span class="version">Version 0.2.3</span>
+<p class="description">ComDeX Demystified: A Complete Guide to Harnessing its Potential</p>
+
+</header>
+<div class="global-menu">
+<nav>
+<ul>
+<li id="home" class=""><a href="/"><i class='fa fa-home'></i>&nbsp;Home</a></li>
+<li id="github" class="github-menu-item"><a href="https://github.com/SAMSGBLab/ComDeX"><i class='fa-brands fa-github'></i>&nbsp;Github <b>Code!</b></a></li>
+<li class=""><a href="/interactivefederationcreator/">Interactive Federation Creator 🔧</a></li></ul>
+</nav>
+</div>
+
+<div class="content-container">
+<main><h1>Code Documentation</h1><h1 id="comdex-prototype-code-function-documentation">ComDeX Prototype Code Function Documentation</h1>
+<p>The ComDeX prototype (which can be found <a href="https://github.com/SAMSGBLab/ComDeX">here</a>) is an NGSI-LD compliant &ldquo;broker&rdquo; that utilises a running MQTT broker. This documentation describes the functionality of the different methods used in the ComDeX codebase.</p>
+<h2 id="post_entity"><code>post_entity()</code></h2>
+<p>This function is used to create a new NGSI-LD entity in the ComDeX node.</p>
+<p><strong>Parameters:</strong></p>
+<ul>
+<li><code>data</code>: The data of the entity to be created.</li>
+<li><code>my_area</code>: The area or domain of the entity.</li>
+<li><code>broker</code>: The name or IP address of the broker.</li>
+<li><code>port</code>: The port number of the broker.</li>
+<li><code>qos</code>: The quality of service level for message delivery.</li>
+<li><code>my_loc</code>: The location of the broker (used for advanced advertisements with geoqueries).</li>
+<li><code>bypass_existence_check</code> (optional): Flag to bypass the existence check of the entity (default: 0).</li>
+<li><code>client</code> (optional): MQTT client object (default: mqtt.Client(clean_session=True)).</li>
+</ul>
+<p><strong>Returns:</strong></p>
+<ul>
+<li>None</li>
+</ul>
+<h2 id="check_existence"><code>check_existence()</code></h2>
+<p>This function checks if an entity or advertisement already exists inside the broker.</p>
+<p><strong>Parameters:</strong></p>
+<ul>
+<li><code>broker</code>: The name or IP address of the broker.</li>
+<li><code>port</code>: The port number of the broker.</li>
+<li><code>topic</code>: The topic name or identifier of the message to check.</li>
+</ul>
+<p><strong>Returns:</strong></p>
+<ul>
+<li>True if the entity/advertisement exists in the broker, False otherwise.</li>
+</ul>
+<h2 id="get"><code>GET()</code></h2>
+<p>This function is used to retrieve entities from the ComDeX node, similar to the NGSI-LD GET entities operation.</p>
+<p><strong>Parameters:</strong></p>
+<ul>
+<li><code>broker</code>: The name or IP address of the broker.</li>
+<li><code>port</code>: The port number of the broker.</li>
+<li><code>topics</code>: A list of topics to subscribe to.</li>
+<li><code>expires</code>: The expiration time in seconds.</li>
+<li><code>qos</code>: The quality of service level for message delivery.</li>
+<li><code>limit</code> (optional): The maximum number of entities to retrieve (default: 2000).</li>
+</ul>
+<p><strong>Returns:</strong></p>
+<ul>
+<li>A list of received messages (entities) ordered via their id.</li>
+</ul>
+<h2 id="recreate_single_entity"><code>recreate_single_entity()</code></h2>
+<p>This function recreates a single entity from the received messages based on the specified query conditions. This is possible because each entity has a unique message id, which is used as the catalyst for the entity reconstruction from its various attribute messages.</p>
+<p><strong>Parameters:</strong></p>
+<ul>
+<li><code>messagez</code>: List of received messages (entities).</li>
+<li><code>query</code>: Query condition to filter the entities (optional, default: &lsquo;&rsquo;).</li>
+<li><code>topics</code>: Topic filters to apply (optional, default: &lsquo;&rsquo;).</li>
+<li><code>timee</code>: Time condition to filter the entities (optional, default: &lsquo;&rsquo;).</li>
+<li><code>georel</code>: Geo-relation condition to filter the entities (optional, default: &lsquo;&rsquo;).</li>
+<li><code>geometry</code>: Geometry type for the geospatial condition (optional, default: &lsquo;&rsquo;).</li>
+<li><code>coordinates</code>: Coordinates for the geospatial condition (optional, default: &lsquo;&rsquo;).</li>
+<li><code>geoproperty</code>: Geospatial property for the geospatial condition (optional, default: &lsquo;&rsquo;).</li>
+<li><code>context_given</code>: Context value for entity comparison (optional, default: &lsquo;&rsquo;).</li>
+</ul>
+<p><strong>Returns:</strong></p>
+<ul>
+<li>None</li>
+</ul>
+<h2 id="recreate_multiple_entities"><code>recreate_multiple_entities()</code></h2>
+<p>This function recreates multiple entities from the received messages based on the specified query conditions. It basically calls the <code>recreate_single_entity</code> command, over a list of MQTT messages, based on their id.</p>
+<p><strong>Parameters:</strong></p>
+<ul>
+<li><code>messagez</code>: List of received messages (entities).</li>
+<li><code>query</code>: Query condition to filter the entities (optional, default: &lsquo;&rsquo;).</li>
+<li><code>topics</code>: Topic filters to apply (optional, default: &lsquo;&rsquo;).</li>
+<li><code>timee</code>: Time condition to filter the entities (optional, default: &lsquo;&rsquo;).</li>
+<li><code>limit</code>: Maximum number of entities to recreate (optional, default: 2000).</li>
+<li><code>georel</code>: Geo-relation condition to filter the entities (optional, default: &lsquo;&rsquo;).</li>
+<li><code>geometry</code>: Geometry type for the geospatial condition (optional, default: &lsquo;&rsquo;).</li>
+<li><code>coordinates</code>: Coordinates for the geospatial condition (optional, default: &lsquo;&rsquo;).</li>
+<li><code>geoproperty</code>: Geospatial property for the geospatial condition (optional, default: &lsquo;&rsquo;).</li>
+<li><code>context_given</code>: Context value for entity comparison (optional, default: &lsquo;&rsquo;).</li>
+</ul>
+<p><strong>Returns:</strong></p>
+<ul>
+<li>None</li>
+</ul>
+<h2 id="multiple_subscriptions"><code>multiple_subscriptions()</code></h2>
+<p>This function sets up multiple subscriptions based on the specified flags and parameters.</p>
+<p><strong>Parameters:</strong></p>
+<ul>
+<li><code>entity_type_flag</code>: Flag indicating whether entity type is specified.</li>
+<li><code>watched_attributes_flag</code>: Flag indicating whether watched attributes are specified.</li>
+<li><code>entity_id_flag</code>: Flag indicating whether entity ID is specified.</li>
+<li><code>area</code>: Area value for the subscriptions.</li>
+<li><code>context</code>: Context value for the subscriptions.</li>
+<li><code>truetype</code>: Entity type value for the subscriptions.</li>
+<li><code>true_id</code>: Entity ID value for the subscriptions.</li>
+<li><code>expires</code>: Expiration time for the subscriptions.</li>
+<li><code>broker</code>: MQTT broker address.</li>
+<li><code>port</code>: MQTT broker port.</li>
+<li><code>qos</code>: Quality of Service level for the subscriptions.</li>
+<li><code>watched_attributes</code>: List of watched attributes for the subscriptions.</li>
+</ul>
+<p><strong>Returns:</strong></p>
+<ul>
+<li>None</li>
+</ul>
+<!-- Continued in the next section... -->
+<h2 id="subscribe"><code>subscribe()</code></h2>
+<p>This function subscribes to MQTT topics and handles the received messages.</p>
+<p><strong>Parameters:</strong></p>
+<ul>
+<li><code>broker</code>: MQTT broker address.</li>
+<li><code>port</code>: MQTT broker port.</li>
+<li><code>topics</code>: List of topics to subscribe to.</li>
+<li><code>expires</code>: Expiration time for the subscriptions.</li>
+<li><code>qos</code>: Quality of Service level for the subscriptions.</li>
+<li><code>context_given</code>: Context value for entity comparison.</li>
+</ul>
+<p><strong>Returns:</strong></p>
+<ul>
+<li>None</li>
+</ul>
+<h2 id="subscribe_for_advertisement_notification"><code>subscribe_for_advertisement_notification()</code></h2>
+<p>This function sets up subscriptions for advertisement notifications based on the specified flags and parameters, basically to find if a new advertisement of interest arrives while an interested subscriber is active (so that the subscriber while also connect to the new advertised source &ldquo;on the fly&rdquo;).</p>
+<p><strong>Parameters:</strong></p>
+<ul>
+<li><code>broker</code>: MQTT broker address.</li>
+<li><code>port</code>: MQTT broker port.</li>
+<li><code>topics</code>: List of topics to subscribe to for advertisement notifications.</li>
+<li><code>expires</code>: Expiration time for the subscriptions.</li>
+<li><code>qos</code>: Quality of Service level for the subscriptions.</li>
+<li><code>entity_type_flag</code>: Flag indicating whether entity type is specified.</li>
+<li><code>watched_attributes_flag</code>: Flag indicating whether watched attributes are specified.</li>
+<li><code>entity_id_flag</code>: Flag indicating whether entity ID is specified.</li>
+<li><code>watched_attributes</code>: List of watched attributes for the subscriptions.</li>
+<li><code>true_id</code>: Entity ID value for the subscriptions.</li>
+</ul>
+<p><strong>Returns:</strong></p>
+<ul>
+<li>None</li>
+</ul>
+<h2 id="clear_retained"><code>clear_retained()</code></h2>
+<p>This function clears the retained messages on the specified topic(s).</p>
+<p><strong>Parameters:</strong></p>
+<ul>
+<li><code>broker</code>: MQTT broker address.</li>
+<li><code>port</code>: MQTT broker port.</li>
+<li><code>retained</code>: Single topic or list of topics to clear retained messages from.</li>
+</ul>
+<p><strong>Returns:</strong></p>
+<ul>
+<li>None</li>
+</ul>
+<h2 id="debug-functions-to-see-mqtt-broker-communication">Debug functions to see MQTT broker communication</h2>
+<h3 id="on_message"><code>on_message()</code></h3>
+<p>Callback function called when a message is received from the MQTT broker.</p>
+<p><strong>Parameters:</strong></p>
+<ul>
+<li><code>client</code>: MQTT client instance.</li>
+<li><code>userdata</code>: Custom userdata provided by the client.</li>
+<li><code>message</code>: MQTT message object containing the received message.</li>
+</ul>
+<p><strong>Returns:</strong></p>
+<ul>
+<li>None</li>
+</ul>
+<h3 id="on_log"><code>on_log()</code></h3>
+<p>Callback function called when a log message is generated by the MQTT client.</p>
+<p><strong>Parameters:</strong></p>
+<ul>
+<li><code>client</code>: MQTT client instance.</li>
+<li><code>userdata</code>: Custom userdata provided by the client.</li>
+<li><code>level</code>: Log level of the message.</li>
+<li><code>buf</code>: Log message string.</li>
+</ul>
+<p><strong>Returns:</strong></p>
+<ul>
+<li>None</li>
+</ul>
+<h2 id="usage"><code>usage()</code></h2>
+<p>This function displays help messages on how to use the command line interface, including the available options and some examples.</p>
+<p><strong>Returns:</strong></p>
+<ul>
+<li>None</li>
+</ul>
+<p><strong>Usage:</strong>
+Usage:
+python actionhandler.py [options]</p>
+<p>Options:
+-h, &ndash;help                Show this help message and exit
+-c, &ndash;command             Provide the command, possible commands include [POST/entities, POST/Subscriptions, DELETE/entities/, PATCH/entities/, GET/entities/, entityOperations/delete, entityOperations/create, entityOperations/update, entityOperations/upsert]
+-f, &ndash;file                Specify the file to be used as input to the command
+-b, &ndash;broker_address      Specify the address of the MQTT broker of the ComDeX node
+-p, &ndash;port                Specify the port number of the MQTT broker of the ComDeX node
+-q, &ndash;qos                 Specify the Quality of Service level (0, 1, or 2) to be used for the specified command
+-H, &ndash;HLink               Specify the HLink, &lsquo;context link&rsquo; to be used for the GET request
+-A, &ndash;singleidadvertisement Specify if single ID advertisement is to be used (use 1 for True), default is false</p>
+<p>Example:
+python3 actionhandler.py -c POST/entities -f entity.ngsild -b localhost -p 1026 -q 1 -H HLink -A 0</p>
+<h2 id="main"><code>main()</code></h2>
+<p>This is the main function where different functions are called mainly based on the selected by the user command.</p>
+<p><strong>Parameters:</strong></p>
+<ul>
+<li><code>argv</code>: command line arguments (see usage and tutorials for details)</li>
+</ul>
+<div class="edit-meta">
+Last updated on 8 Jun 2023
+
+
+<br>
+Published on 8 Jun 2023
+<br></div><nav class="pagination"><a class="nav nav-prev" href="https://example.com/prototype/" title="Prototype Implementation"><i class="fas fa-arrow-left" aria-hidden="true"></i>&nbsp;Prev - Prototype Implementation</a>
+<a class="nav nav-next" href="https://example.com/prototype/api/" title="ComDeX prototype API and current State of the implementation">Next - ComDeX prototype API and current State of the implementation <i class="fas fa-arrow-right" aria-hidden="true"></i></a>
+</nav><footer><p class="powered">Powered by <a href="https://gohugo.io">Hugo</a>. Theme by <a href="https://themes.gohugo.io/hugo-theme-techdoc/">TechDoc</a>. Designed by <a href="https://github.com/thingsym/hugo-theme-techdoc">Thingsym</a>.</p>
+</footer>
+</main>
+<div class="sidebar">
+
+<nav class="open-menu">
+<ul>
+<li class=""><a href="https://example.com">Home</a></li>
+
+<li class=""><a href="https://example.com/background/">Background</a>
+  
+</li>
+
+<li class=""><a href="https://example.com/architecture/">ComDeX Architecture</a>
+  
+</li>
+
+<li class="parent"><a href="https://example.com/prototype/">Prototype Implementation</a>
+  
+<ul class="sub-menu">
+
+<li class=" active"><a href="https://example.com/prototype/documentation/">Code Documentation</a>
+  
+</li>
+
+<li class=""><a href="https://example.com/prototype/api/">ComDeX prototype API and current State of the implementation</a>
+  
+</li>
+</ul>
+  
+</li>
+
+<li class=""><a href="https://example.com/tutorial/">Tutorials</a>
+  
+<ul class="sub-menu">
+
+<li class=""><a href="https://example.com/tutorial/installation/">Installation</a>
+  
+</li>
+
+<li class=""><a href="https://example.com/tutorial/configuration/">Configuration</a>
+  
+</li>
+
+<li class=""><a href="https://example.com/tutorial/demos/">Demos</a>
+  
+<ul class="sub-menu">
+
+<li class=""><a href="https://example.com/tutorial/demos/multiple-communities-exploiting-a-federation-of-brokers/">Multiple Communities Exploiting a Federation of Brokers</a>
+  
+</li>
+
+<li class=""><a href="https://example.com/tutorial/demos/single-community-exploiting-a-central-broker/">Single Community Exploiting a Central Broker</a>
+  
+</li>
+
+<li class=""><a href="https://example.com/tutorial/demos/single-community-exploiting-a-federation-of-brokers/">Single Community Exploiting a Federation of Brokers</a>
+  
+</li>
+</ul>
+  
+</li>
+</ul>
+  
+</li>
+
+<li class=""><a href="https://example.com/interactivefederationcreator/">Interactive Federation Creator 🔧</a>
+  
+</li>
+
+<li class=""><a href="https://example.com/future-developments/">RoadMap</a>
+  
+</li>
+
+<li class=""><a href="https://example.com/publications/">Publications</a>
+  
+</li>
+
+<li class=""><a href="https://example.com/contact/">Contact Us</a>
+  
+</li>
+
+
+</ul>
+</nav>
+
+
+
+<div class="sidebar-footer"></div>
+</div>
+
+</div><a href="#" id="backtothetop-fixed" class="backtothetop"
+ data-backtothetop-duration="600"
+ data-backtothetop-easing="easeOutQuart"
+ data-backtothetop-fixed-fadeIn="1000"
+ data-backtothetop-fixed-fadeOut="1000"
+ data-backtothetop-fixed-bottom="10"
+ data-backtothetop-fixed-right="20">
+<span class="fa-layers fa-fw">
+<i class="fas fa-circle"></i>
+<i class="fas fa-arrow-circle-up"></i>
+</span></a>
+</div>
+</body>
+</html>
