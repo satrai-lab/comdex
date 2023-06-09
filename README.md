@@ -19,7 +19,7 @@ An agile and decentralized system designed for the dynamic evolution of the Inte
 
 ## Overview
 
-ComDeX is a lightweight, federated NGSI-LD broker system that leverages open-source MQTT brokers. Initially conceived as a test suite for MQTT with [NGSI-LD](https://www.etsi.org/deliver/etsi_gs/CIM/001_099/009/01.01.01_60/gs_CIM009v010101p.pdf), it has evolved into a versatile Internet of Things (IoT) platform. Compared to traditional heavyweight NGSI-LD brokers favoring HTTP as a communication protocol, ComDeX offers end-to-end MQTT capabilities, including QoS delivery guarantees. For a deep dive into our prototype and working examples, refer to our wiki (link TBA).
+ComDeX is a lightweight, federated NGSI-LD broker system that leverages open-source MQTT brokers. Initially conceived as a test suite for MQTT with [NGSI-LD](https://www.etsi.org/deliver/etsi_gs/CIM/001_099/009/01.01.01_60/gs_CIM009v010101p.pdf), it has evolved into a versatile Internet of Things (IoT) platform. Compared to traditional heavyweight NGSI-LD brokers favoring HTTP as a communication protocol, ComDeX offers end-to-end MQTT capabilities, including QoS delivery guarantees. For a deep dive into our prototype, refer to our [wiki](https://samsgblab.github.io/ComDeX/).
 
 ## How It Works
 
