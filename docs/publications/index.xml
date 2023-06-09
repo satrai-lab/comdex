@@ -2,10 +2,10 @@
 <rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
   <channel>
     <title>Publications on ComDeX Wiki</title>
-    <link>https://example.com/publications/</link>
+    <link>https://samsgblab.github.io/ComDeX/publications/</link>
     <description>Recent content in Publications on ComDeX Wiki</description>
     <generator>Hugo -- gohugo.io</generator>
     <language>en-us</language>
-    <lastBuildDate>Fri, 02 Jun 2023 15:26:15 +0000</lastBuildDate><atom:link href="https://example.com/publications/index.xml" rel="self" type="application/rss+xml" />
+    <lastBuildDate>Fri, 02 Jun 2023 15:26:15 +0000</lastBuildDate><atom:link href="https://samsgblab.github.io/ComDeX/publications/index.xml" rel="self" type="application/rss+xml" />
   </channel>
 </rss>
