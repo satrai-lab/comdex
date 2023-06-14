@@ -1,0 +1,12 @@
+{
+  "id": "urn:subscription:3",
+  "type": "Subscription",
+  "entities": [{
+                "type": "GtfsAgency"
+  }],
+  "watchedAttributes": ["agencyName","language"],
+  "@context": [
+    "https://smartdatamodels.org/context.jsonld",
+    "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld"
+    ]
+}

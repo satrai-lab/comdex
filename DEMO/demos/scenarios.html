@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Swiper Slideshow</title>
+
+    <!-- Swiper CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/swiper/swiper-bundle.min.css">
+
+    <!-- Custom Styles -->
+    <style>
+        body {
+            background: #eee;
+            font-family: Arial, sans-serif;
+        }
+
+        .swiper-container {
+            width: 80%;
+            height: 60vh;
+            margin: 50px auto;
+        }
+        .home-button {
+      background-color: #21b3fc;
+      color: white;
+      padding: 10px 20px;
+      text-decoration: none;
+      font-weight: bold;
+      border-radius: 5px;
+        }
+        .swiper-slide {
+            text-align: center;
+            font-size: 18px;
+            background: #fff;
+
+            /* Center slide text vertically */
+            display: -webkit-box;
+            display: -ms-flexbox;
+            display: -webkit-flex;
+            display: flex;
+            -webkit-box-pack: center;
+            -ms-flex-pack: center;
+            -webkit-justify-content: center;
+            justify-content: center;
+            -webkit-box-align: center;
+            -ms-flex-align: center;
+            -webkit-align-items: center;
+            align-items: center;
+        }
+
+        .swiper-slide img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+    </style>
+</head>
+<body>
+  <a class="home-button" href="../main_menu.html">Home</a>
+  <select id="presentation-selector" onchange="loadPresentation()">
+    <option value="presentation1">Presentation 1</option>
+    <option value="presentation2">Presentation 2</option>
+    <option value="presentation3">Presentation 3</option>
+</select>
+    <!-- Swiper -->
+    <div class="swiper-container">
+        <div class="swiper-wrapper">
+            <div class="swiper-slide">
+                <img src="img1.jpg" alt="Image 1">
+            </div>
+            <div class="swiper-slide">
+                <img src="img2.jpg" alt="Image 2">
+            </div>
+            <div class="swiper-slide">
+                <img src="img3.jpg" alt="Image 3">
+            </div>
+        </div>
+
+        <!-- Add Pagination -->
+        <div class="swiper-pagination"></div>
+
+        <!-- Add Navigation -->
+        <div class="swiper-button-next"></div>
+        <div class="swiper-button-prev"></div>
+    </div>
+    
+
+    <!-- Swiper JS -->
+    <script src="https://unpkg.com/swiper/swiper-bundle.min.js"></script>
+
+    <!-- Initialize Swiper -->
+    <script>
+      var presentations = {
+    presentation1: [
+        'img1.jpg',
+        'img2.jpg',
+        'img3.jpg'
+    ],
+    presentation2: [
+        'img4.jpg',
+        'img5.jpg',
+        'img6.jpg'
+    ],
+    presentation3: [
+        'img7.jpg',
+        'img8.jpg',
+        'img9.jpg'
+    ]
+};
+        var swiper;
+    function loadPresentation() {
+    // Destroy the existing Swiper instance
+    if (swiper) {
+        swiper.destroy();
+    }
+
+    // Get the selected presentation and its corresponding images
+    var presentation = document.getElementById('presentation-selector').value;
+    var images = presentations[presentation];
+
+    // Remove the current slides
+    var swiperWrapper = document.querySelector('.swiper-wrapper');
+    while (swiperWrapper.firstChild) {
+        swiperWrapper.removeChild(swiperWrapper.firstChild);
+    }
+
+    // Add the new slides
+    for (var i = 0; i < images.length; i++) {
+        var slide = document.createElement('div');
+        slide.classList.add('swiper-slide');
+
+        var img = document.createElement('img');
+        img.src = images[i];
+        slide.appendChild(img);
+
+        swiperWrapper.appendChild(slide);
+    }
+
+    // Initialize Swiper
+    swiper = new Swiper('.swiper-container', {
+        slidesPerView: 1,
+        spaceBetween: 10,
+        navigation: {
+            nextEl: '.swiper-button-next',
+            prevEl: '.swiper-button-prev',
+        },
+        pagination: {
+            el: '.swiper-pagination',
+            clickable: true,
+        },
+    });
+}
+
+// Load the first presentation on page load
+window.onload = loadPresentation;
+    </script>
+</body>
+</html>

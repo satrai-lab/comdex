@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <body onload="setZoom()">
+    <title>ComDeX Topology Manager</title>
+    <style>
+        body {
+            background-color: #f0f0f0;
+            font-family: Arial, sans-serif;
+        }
+        #cy {
+            width: 800px;
+            height: 800px;
+            border: solid;
+            margin: auto;
+            position: relative;
+        }
+        .container {
+            display: flex;
+            justify-content: space-around;
+            flex-wrap: wrap;
+        }
+        .form-container {
+            width: 300px;
+            margin: 10px;
+            border: solid;
+            padding: 20px;
+            border-radius: 10px;
+            background-color: #ffffff;
+        }
+        .form-container input[type=text], 
+        .form-container select {
+            width: 100%;
+            padding: 12px 20px;
+            margin: 8px 0;
+            display: inline-block;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        .home-button {
+      background-color: #21b3fc;
+      color: white;
+      padding: 10px 20px;
+      text-decoration: none;
+      font-weight: bold;
+      border-radius: 5px;
+        }
+        .form-container input[type=submit] {
+            width: 100%;
+            background-color: #4CAF50;
+            color: white;
+            padding: 14px 20px;
+            margin: 8px 0;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .form-container input[type=submit]:hover {
+            background-color: #45a049;
+        }
+
+        .form2-container {
+            width: 288px;
+            height: 100px;
+            margin: 1px;
+            border: solid;
+            padding: 5px;
+            border-radius: 5px;
+            background-color: #ffffff;
+        }
+        .form2-container input[type=text], 
+        .form2-container select {
+            width: 100%;
+            padding: 12px 20px;
+            margin: 8px 0;
+            display: inline-block;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        .form2-container input[type=submit] {
+            width: 100%;
+            background-color: #4CAF50;
+            color: white;
+            padding: 14px 20px;
+            margin: 8px 0;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .form2-container input[type=submit]:hover {
+            background-color: #45a049;
+        }
+
+
+
+
+        .controls-container {
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-start;
+            align-items: center;
+            width: 200px;
+            margin: 10px;
+            border: solid;
+            padding: 20px;
+            border-radius: 10px;
+            background-color: #ffffff;
+        }
+        .controls-container button {
+            background-color: #008CBA;
+            color: white;
+            padding: 15px 32px;
+            text-align: center;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 16px;
+            margin: 10px 0;
+            width: 100%;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .controls-container button:hover {
+            background-color: #007B9A;
+        }
+        #terminal {
+        background-color: black;
+        color: lime;
+        font-family: monospace;
+        padding: 10px;
+        }
+        #terminal2 {
+        background-color: black;
+        color: lime;
+        font-family: monospace;
+        padding: 10px;
+        }
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            overflow: auto;
+            background-color: rgba(0, 0, 0, 0.4);
+        }
+        
+        .modal-content {
+            background-color: #fefefe;
+            margin: 15% auto;
+            padding: 20px;
+            border: 1px solid #888;
+            width: 80%;
+            max-height: 80%;
+            overflow-y: auto;
+        }
+        
+        /* Styling for the JSON content */
+        pre {
+            background-color: #f7f7f7;
+            padding: 10px;
+            font-size: 14px;
+            font-family: Consolas, Monaco, 'Courier New', monospace;
+        }
+    </style>
+</head>
+<body>
+    <a class="home-button" href="main_menu.html">Home</a>
+    <div class="container">
+        
+        <div id="cy"></div>
+        
+        <div class="form-container">
+            <h2>Add Node</h2>
+            <form id="addNodeForm">
+                <label for="nodeName">Name:</label><br>
+                <input type="text" id="nodeName" name="nodeName"><br>
+
+                <label for="nodeIp">IP:</label><br>
+                <input type="text" id="nodeIp" name="nodeIp"><br>
+
+                <label for="nodePort">Port:</label><br>
+                <input type="text" id="nodePort" name="nodePort"><br>
+
+                <label for="nodeCommunity">Community:</label><br>
+                <input type="text" id="nodeCommunity" name="nodeCommunity"><br>
+
+                <input type="submit" value="Add Node">
+            </form>
+
+            <h2>Add Edge</h2>
+            <form id="addEdgeForm">
+                <label for="sourceNode">Source Node:</label><br>
+                <select id="sourceNode" name="sourceNode"></select><br>
+
+                <label for="targetNode">Target Node:</label><br>
+                <select id="targetNode" name="targetNode"></select><br>
+
+                <label for="edgeTopic">Advertisement Topic:</label><br>
+                <input type="text" id="edgeTopic" name="edgeTopic"><br>
+
+                <input type="submit" value="Add Edge">
+            </form>
+        </div>
+
+        <div class="controls-container">
+            <b>Topology Commands</b>
+            <button id="exportConf">Export .conf</button>
+            <button id="deleteButton">Delete Selected Nodes/Edges</button>
+            <button id="CreateFederation">Create Federation based on configuration (.conf) files</button>
+            <div id="output"></div>
+        </div>
+        <div class="form-container">
+        <form id="form">
+            <textarea id="terminal" rows="40" cols="35" readonly></textarea>
+            
+        </form>
+        <div class="form2-container">
+            <form id="form2">
+                <textarea id="terminal2" rows="5" cols="33" readonly></textarea>
+                
+            </form>
+    </div>
+
+    </div>
+    <form id="commandForm">
+        <label for="command">Command:</label>
+        <input list="commands" id="command">
+        <datalist id="commands">
+            <option value="POST/entities">
+            <option value="POST/Subscriptions">
+            <option value="DELETE/entities/">
+            <option value="PATCH/entities/">
+            <option value="GET/entities/">
+            <option value="entityOperations/delete">
+            <option value="entityOperations/create">
+            <option value="entityOperations/update">
+            <option value="entityOperations/upsert">
+        </datalist>
+        <label for="file">File:</label>
+        <input type="file" id="file" accept=".json, .ldjson, .ngsi-ld, .ngsild"> 
+        <label for="broker_address">Broker address:</label>
+        <input type="text" id="broker_address">
+        <label for="port">Port:</label>
+        <input type="text" id="port">
+        <label for="qos">QoS:</label>
+        <select id="qos">
+            <option value="0">0</option>
+            <option value="1">1</option>
+            <option value="2">2</option>
+        </select>
+        <label for="HLink">HLink:</label>
+        <input type="text" id="HLink">
+        <label for="singleidadvertisement">Single ID Advertisement:</label>
+        <select id="singleidadvertisement">
+            <option value="0">0</option>
+            <option value="1">1</option>
+        </select>
+        <input type="submit" value="Submit">
+    </form>    
+</body>
+    <script src="https://unpkg.com/cytoscape/dist/cytoscape.min.js"></script>
+    <script src="https://unpkg.com/cytoscape-node-editing"></script>
+    <script src="https://unpkg.com/cytoscape-edgehandles"></script>
+    <script src="app.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.2.0/styles/default.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.2.0/highlight.min.js"></script>
+</body>
+</html>

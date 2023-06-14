@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Main Menu</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
+    <style>
+        
+        body {
+            background-color: #f2f2f2;
+            font-family: Arial, sans-serif;
+        }
+        .menu-window {
+            max-width: 500px;
+            width: 90%;
+            min-height: 300px;
+            background-color: #97c3c7;
+            margin: 5% auto;
+            padding: 20px;
+            box-shadow: 0px 0px 15px rgba(0,0,0,0.2);
+            border-radius: 15px;
+            text-align: center;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-around;
+        }
+        .menu-window h1 {
+            font-size: 1.5em;
+            color: #333;
+            text-align: center;
+        }
+        .menu-window button {
+            margin: 10px;
+            padding: 10px 20px;
+            font-size: 1em;
+            background-color: #34a8eb;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            transition: background-color 0.5s ease;
+            cursor: pointer;
+        }
+        .menu-window button:hover {
+            background-color: #02079e;
+        }
+    </style>
+</head>
+<body>
+    <div class="menu-window">
+        <h1><b>Welcome to the ComDeX usage tool.</b></h1>
+        <br><h3>Simplifying your Comdex experience</h3>
+        <button onclick="window.location.href='federation_tool.html'"><i class="fa fa-wrench"></i> Try out the topology manager tool.</button>
+        <button onclick="window.location.href='About'"><i class="fa fa-book"></i> About</button>
+        <button onclick="window.location.href='demos/scenarios.html'"><i class="fa fa-tasks"></i> Demo Scenarios</button>
+        <button onclick="window.location.href='https://samsgblab.github.io/ComDeX/'"><i class="fa fa-info-circle"></i> ComDeX Wiki</button>
+        <button onclick="self.close()">Close</button>
+    </div>
+    <script>
+        window.addEventListener('resize', resizeMenu);
+
+        function resizeMenu() {
+            const menu = document.querySelector('.menu-window');
+            const width = window.innerWidth;
+            const height = window.innerHeight;
+
+            if (width < 400) {
+                menu.style.width = '80%';
+            } else {
+                menu.style.width = '90%';
+            }
+
+            if (height < 300) {
+                menu.style.height = '80%';
+            } else {
+                menu.style.height = 'auto';
+            }
+        }
+
+        resizeMenu();
+        function promptClose() {
+    var confirmClose = confirm('Are you sure you want to close this page?');
+    if (confirmClose) {
+        // Close the window
+        window.open('', '_self').close();
+    }
+}
+    </script>
+</body>
+</html>
