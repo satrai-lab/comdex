@@ -1,3 +1,16 @@
+function stringToColor(str) {
+    var hash = 0;
+    for (var i = 0; i < str.length; i++) {
+        hash = str.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    var color = '';
+    for (var i = 0; i < 3; i++) {
+        var value = (hash >> (i * 8)) & 0xFF;
+        color += ('00' + value.toString(16)).substr(-2);
+    }
+    return '#' + color;
+};
+
 document.addEventListener("DOMContentLoaded", function(){
     var cy = window.cy = cytoscape({
         container: document.getElementById('cy'),
@@ -47,19 +60,6 @@ document.addEventListener("DOMContentLoaded", function(){
             edges: []
         }
     });
-
-    function stringToColor(str) {
-        var hash = 0;
-        for (var i = 0; i < str.length; i++) {
-            hash = str.charCodeAt(i) + ((hash << 5) - hash);
-        }
-        var color = '';
-        for (var i = 0; i < 3; i++) {
-            var value = (hash >> (i * 8)) & 0xFF;
-            color += ('00' + value.toString(16)).substr(-2);
-        }
-        return '#' + color;
-    }
     document.getElementById('deleteButton').addEventListener('click', function() {
         var selectedNodes = cy.nodes(':selected');
         var selectedEdges = cy.edges(':selected');
@@ -98,8 +98,9 @@ document.addEventListener("DOMContentLoaded", function(){
     
         const boundingBox = cy.elements().boundingBox();
         
-        const posX = Math.floor(Math.random() * (boundingBox.x1 - boundingBox.x2) + boundingBox.x2);
-        const posY = Math.floor(Math.random() * (boundingBox.y1 - boundingBox.y2) + boundingBox.y2);
+        const posX = Math.floor(Math.random() * (boundingBox.x2 - boundingBox.x1) + boundingBox.x1);
+        const posY = Math.floor(Math.random() * (boundingBox.y2 - boundingBox.y1) + boundingBox.y1);
+
     
         cy.add({
             group: 'nodes',
@@ -161,6 +162,7 @@ document.addEventListener("DOMContentLoaded", function(){
     recStack[node.id()] = false;  // remove the node from recursion stack
     return false;
 }
+
 document.getElementById('exportConf').addEventListener('click', function() {
     // check for cycles
     var nodes = cy.nodes();
@@ -189,10 +191,12 @@ document.getElementById('exportConf').addEventListener('click', function() {
             var node = nodes[i];
             var conf = [];
             // Add additional configurations
-            conf.push("pid_file ./mosquitto.pid");
+            //conf.push("pid_file ./mosquitto.pid");
             conf.push("max_queued_messages 4000");
             conf.push("persistence true");
-            conf.push("persistence_location .");
+            // Define the persistence location for each node based on its name or id
+            var persistenceLocation = `./${node.id}/`;
+            conf.push(`persistence_location ${persistenceLocation}`);
             conf.push("log_dest stdout");
             conf.push(`listener ${node.port} ${node.ip}`);
             conf.push('allow_anonymous true');
@@ -201,10 +205,12 @@ document.getElementById('exportConf').addEventListener('click', function() {
             edges.forEach(function(edge) {
                 var target = edge.target();
                 conf.push('');
-                conf.push(`connection bridge_to_${target.id()}`);
+                let randomString = Math.random().toString(36).substring(7);
+                conf.push(`connection ${node.id.replace(/\s+/g, '_')}${randomString}bridge_to_${target.id().replace(/\s+/g, '_')}${randomString}`);
+
                 conf.push(`address ${target.data().ip}:${target.data().port}`);
                 // Append 'provider/' prefix to topic and handle 'all' case
-                var topic = edge.data().topic.toLowerCase() === 'all' ? 'provider/#' : `provider/${edge.data().topic}/#`;
+                var topic = edge.data().topic.toLowerCase() === 'all' ? 'provider/#' : `provider/+/+/+/+/${edge.data().topic}`;
                 conf.push(`topic ${topic} out 2 "" ""`);
             });
 
@@ -233,87 +239,10 @@ document.getElementById('exportConf').addEventListener('click', function() {
     cy.edgehandles({});
 });
 
-const socket = new WebSocket('ws://localhost:8080');
-const terminal = document.getElementById('terminal');
-const form = document.getElementById('form');
-const input = document.getElementById('input');
-const terminal2= document.getElementById('terminal2');
 
-// When the WebSocket is open, echo a message to indicate this
-socket.addEventListener('open', function (event) {
-    terminal.value += '\nConnected to server\n';
-});
 
-// Log messages from the server
-socket.addEventListener('message', function (event) {
-    terminal.value += '\n' + event.data;
-});
-
-// Send a message to the server when the form is submitted
-form.addEventListener('submit', function(event) {
-  event.preventDefault();
-        
-        const message = {
-            type: "message",
-            payload: input.value
-        };
-        socket.send(JSON.stringify(message));
-        input.value = '';
-});
-
-document.getElementById('commandForm').addEventListener('submit', function(event) {
-    event.preventDefault();
-
-    const fileInput = document.getElementById('file');
-    const file = fileInput.files.length > 0 ? fileInput.files[0] : null;
-    const fileName = file ? file.name : ""; // Extract the file name if file exists, otherwise empty string
-
-    const message = {
-        type: "command",
-        payload: {
-            command: document.getElementById('command').value,
-            file: fileName, // Use the file name instead of full path, or empty string
-            broker_address: document.getElementById('broker_address').value,
-            port: document.getElementById('port').value,
-            qos: document.getElementById('qos').value,
-            HLink: document.getElementById('HLink').value,
-            singleidadvertisement: document.getElementById('singleidadvertisement').value,
-        }
-    };
-
-    terminal2.value = "python3 actionhandler.py";
-
-    // Appending the values to terminal2.value
-    for(let key in message.payload) {
-        let value = message.payload[key];
-        // Check if the value is not empty
-        if(value !== "" && value !== " ") {
-            terminal2.value += " --" + key + " " + value;
-        }
-    }
-
-    socket.send(JSON.stringify(message));
-});
-
-document.getElementById('CreateFederation').addEventListener('click', function(event) {
-    event.preventDefault();
-        
-    const message = {
-        type: "Brokers"
-    };
-    
-    socket.send(JSON.stringify(message));
-});
-
-function setZoom() {
-    // document.body.style.zoom = "79%"; // Adjust the zoom level as desired
-
-  }
-
-document.getElementById('file').addEventListener('change', function(event) {
-    event.preventDefault();  // prevent the form from being submitted
-
-    var fileInput = document.getElementById('file');
+document.getElementById('importTopology').addEventListener('change', function(event) {
+    var fileInput = event.target;
     var file = fileInput.files[0];
 
     if (file) {
@@ -322,16 +251,66 @@ document.getElementById('file').addEventListener('change', function(event) {
         reader.onload = function() {
             try {
                 var json = JSON.parse(reader.result);
-                var output = JSON.stringify(json, null, 2);
-                showModal(output);
+
+                // Clear the current graph
+                cy.elements().remove();
+
+                // Import nodes
+                if (Array.isArray(json.nodes)) {
+                    json.nodes.forEach(function(nodeData) {
+                        if (nodeData.id && nodeData.position && typeof nodeData.position.x === 'number' && typeof nodeData.position.y === 'number') {
+                            cy.add({
+                                group: 'nodes',
+                                data: {
+                                    id: nodeData.id,
+                                    ip: nodeData.ip || '',
+                                    port: nodeData.port || '',
+                                    community: nodeData.community || '',
+                                    communityColor: stringToColor(nodeData.community || '')
+                                },
+                                position: {
+                                    x: nodeData.position.x,
+                                    y: nodeData.position.y
+                                }
+                            });
+                        }
+                    });
+                }
+
+                // Import edges
+                if (Array.isArray(json.edges)) {
+                    json.edges.forEach(function(edgeData) {
+                        if (edgeData.id && edgeData.source && edgeData.target && edgeData.topic) {
+                            cy.add({
+                                group: 'edges',
+                                data: {
+                                    id: edgeData.id,
+                                    source: edgeData.source,
+                                    target: edgeData.target,
+                                    topic: edgeData.topic
+                                }
+                            });
+                        }
+                    });
+                }
             } catch (e) {
+                console.log("Error parsing JSON file:", e);
                 alert("Invalid JSON file");
             }
         };
 
         reader.readAsText(file);
     }
-  });
+});
+
+
+
+
+
+function setZoom() {
+    // document.body.style.zoom = "79%"; // Adjust the zoom level as desired
+
+  };
 
   function showModal(content) {
     var modal = document.createElement('div');
@@ -358,4 +337,5 @@ document.getElementById('file').addEventListener('change', function(event) {
 
     // Apply syntax highlighting to the JSON content
     hljs.highlightBlock(preElement);
-  }
+  };
+

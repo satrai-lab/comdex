@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <title>Demo Scenarios</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Swiper Slideshow</title>
 
@@ -10,149 +11,179 @@
 
     <!-- Custom Styles -->
     <style>
-        body {
+         body {
             background: #eee;
             font-family: Arial, sans-serif;
         }
 
         .swiper-container {
             width: 80%;
-            height: 60vh;
+            height: 83vh;
             margin: 50px auto;
         }
+
         .home-button {
-      background-color: #21b3fc;
-      color: white;
-      padding: 10px 20px;
-      text-decoration: none;
-      font-weight: bold;
-      border-radius: 5px;
+            background-color: #21b3fc;
+            color: white;
+            padding: 10px 20px;
+            text-decoration: none;
+            font-weight: bold;
+            border-radius: 5px;
         }
+
         .swiper-slide {
             text-align: center;
             font-size: 18px;
             background: #fff;
 
             /* Center slide text vertically */
-            display: -webkit-box;
-            display: -ms-flexbox;
-            display: -webkit-flex;
             display: flex;
-            -webkit-box-pack: center;
-            -ms-flex-pack: center;
-            -webkit-justify-content: center;
             justify-content: center;
-            -webkit-box-align: center;
-            -ms-flex-align: center;
-            -webkit-align-items: center;
             align-items: center;
+            flex-direction: column;
         }
 
         .swiper-slide img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
+            width: 60%;
+            height: 50%;
+            object-fit: contain;
+            margin-bottom: 20px;
+        }
+
+        .swiper-slide p {
+            width: 80%;
+            text-align: left;
+        }
+
+        .swiper-slide h2 {
+            width: 80%;
+            text-align: center;
+        }
+        .demo-button {
+            background-color: #21b3fc;
+            color: white;
+            padding: 15px 32px;
+            text-align: center;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 16px;
+            margin: 4px 2px;
+            cursor: pointer;
+            border-radius: 5px;
         }
     </style>
 </head>
 <body>
-  <a class="home-button" href="../main_menu.html">Home</a>
+    <a class="home-button" href="../main_menu.html">Home</a>
   <select id="presentation-selector" onchange="loadPresentation()">
-    <option value="presentation1">Presentation 1</option>
-    <option value="presentation2">Presentation 2</option>
-    <option value="presentation3">Presentation 3</option>
-</select>
-    <!-- Swiper -->
-    <div class="swiper-container">
-        <div class="swiper-wrapper">
-            <div class="swiper-slide">
-                <img src="img1.jpg" alt="Image 1">
-            </div>
-            <div class="swiper-slide">
-                <img src="img2.jpg" alt="Image 2">
-            </div>
-            <div class="swiper-slide">
-                <img src="img3.jpg" alt="Image 3">
-            </div>
-        </div>
+    <!--<option value="presentation0">About ComDeX</option>-->
+    <option value="presentation1">Scenario 1</option>
+    <option value="presentation2">Scenario 2</option>
+    <option value="presentation3">Scenario 3</option>
+  </select>
 
-        <!-- Add Pagination -->
-        <div class="swiper-pagination"></div>
-
-        <!-- Add Navigation -->
-        <div class="swiper-button-next"></div>
-        <div class="swiper-button-prev"></div>
+  <!-- Swiper -->
+  <div class="swiper-container">
+    <div class="swiper-wrapper">
+      <!-- Slides will be added dynamically here -->
     </div>
+
+    <!-- Add Pagination -->
+    <div class="swiper-pagination"></div>
+
+    <!-- Add Navigation -->
+    <div class="swiper-button-next"></div>
+    <div class="swiper-button-prev"></div>
+  </div>
     
+  <!-- Swiper JS -->
+  <script src="https://unpkg.com/swiper/swiper-bundle.min.js"></script>
 
-    <!-- Swiper JS -->
-    <script src="https://unpkg.com/swiper/swiper-bundle.min.js"></script>
-
-    <!-- Initialize Swiper -->
-    <script>
-      var presentations = {
-    presentation1: [
-        'img1.jpg',
-        'img2.jpg',
-        'img3.jpg'
-    ],
-    presentation2: [
-        'img4.jpg',
-        'img5.jpg',
-        'img6.jpg'
-    ],
-    presentation3: [
-        'img7.jpg',
-        'img8.jpg',
-        'img9.jpg'
-    ]
-};
-        var swiper;
+  <!-- Initialize Swiper -->
+  <script>
+    var presentations = {
+      presentation1: [
+          { img: './images/singlecommunity.png', title: 'Scenario 1: Single Community Exploiting a Central Broker', description: 'A smart port managed by a singular port administration organization. All data interactions are orchestrated by the same community. ' },
+          { img: './images/OneBroker.png', title: 'Centralized Broker', description: 'All entities are created and consumed at the same broker, there is no federation.' },
+          { title: 'Demo showcase', description: 'Using this scenario we can highlight the usability of ComDeX as a "traditional" centralised broker and the flexibility of performing context aware operations at various granularity levels, such as using entity id, entity type, or even specific entity attributes.', button: { text: 'Go to Demo comdex overlay manager', link: '../federation_tool.html'} }
+      ],
+      presentation2: [
+          { img: './images/singlecommunity.png', title: 'Scenario 2: Single Community Exploiting a Federation of Brokers', description: 'Again we have a single community—the smart port administration organization. All data interactions are orchestrated by the same community, but now the load is supposedly too big for a centralised broker.' },
+          { img: './images/Single Community-federation.png', title: 'Partitioned Community', description: 'This scenario demonstrates how a single community can be partitioned into a federation of brokers based on spatial characteristics or application domains. Here we can see that we can divide it based on the "areas of the port", west and east' },
+          { title: 'Demo showcase', description: 'Here we explore ComDeX’s capabilities in managing data exchange within a more intricate, yet singular, community setup.', button: { text: 'Go to Demo comdex overlay manager', link: '../federation_tool.html'}  }
+      ],
+      presentation3: [
+          { img: './images/multiplecommunities.png', title: 'Scenario 3: Multiple Communities Exploiting a Federation of Brokers', description: 'This time in the smart port we consider that there are multiple smart communities involved, each community possesses its own broker network.' },
+          { img: './images/Complex Scenario.png', title: 'Complex IoT Ecosystem', description: 'This scenario results in a complex, large-scale IoT ecosystem underscoring the strength of the federated broker network.' },
+          {title: 'Demo showcase', description: 'The focus here is on demonstrating how ComDeX facilitates the configuration of multiple communities and how advertisements provide a mechanism for controlling the flow and discovery of information across these ecosystems.', button: { text: 'Go to Demo comdex overlay manager', link: '../federation_tool.html'} }
+      ]
+    };
+    var swiper;
     function loadPresentation() {
-    // Destroy the existing Swiper instance
-    if (swiper) {
-        swiper.destroy();
-    }
+      // Destroy the existing Swiper instance
+      if (swiper) {
+          swiper.destroy();
+      }
 
-    // Get the selected presentation and its corresponding images
-    var presentation = document.getElementById('presentation-selector').value;
-    var images = presentations[presentation];
+      // Get the selected presentation and its corresponding images
+      var presentation = document.getElementById('presentation-selector').value;
+      var slides = presentations[presentation];
 
-    // Remove the current slides
-    var swiperWrapper = document.querySelector('.swiper-wrapper');
-    while (swiperWrapper.firstChild) {
-        swiperWrapper.removeChild(swiperWrapper.firstChild);
-    }
+      // Remove the current slides
+      var swiperWrapper = document.querySelector('.swiper-wrapper');
+      while (swiperWrapper.firstChild) {
+          swiperWrapper.removeChild(swiperWrapper.firstChild);
+      }
+    // ... existing loadPresentation function ...
 
-    // Add the new slides
-    for (var i = 0; i < images.length; i++) {
+    for (var i = 0; i < slides.length; i++) {
+        var slideData = slides[i];
+
         var slide = document.createElement('div');
         slide.classList.add('swiper-slide');
 
-        var img = document.createElement('img');
-        img.src = images[i];
-        slide.appendChild(img);
+        if (slideData.img) {
+          var img = document.createElement('img');
+          img.src = slideData.img;
+          slide.appendChild(img);
+        }
+
+        var h2 = document.createElement('h2');
+        h2.textContent = slideData.title;
+        slide.appendChild(h2);
+
+        var p = document.createElement('p');
+        p.innerHTML = slideData.description; // Changed from p.textContent
+        slide.appendChild(p);
+
+        if (slideData.button) {
+          var btn = document.createElement('a');
+          btn.href = slideData.button.link;
+          btn.textContent = slideData.button.text;
+          btn.classList.add('demo-button');
+          slide.appendChild(btn);
+        }
 
         swiperWrapper.appendChild(slide);
     }
 
     // Initialize Swiper
     swiper = new Swiper('.swiper-container', {
-        slidesPerView: 1,
-        spaceBetween: 10,
-        navigation: {
-            nextEl: '.swiper-button-next',
-            prevEl: '.swiper-button-prev',
-        },
-        pagination: {
-            el: '.swiper-pagination',
-            clickable: true,
-        },
-    });
-}
+          slidesPerView: 1,
+          spaceBetween: 10,
+          navigation: {
+              nextEl: '.swiper-button-next',
+              prevEl: '.swiper-button-prev',
+          },
+          pagination: {
+              el: '.swiper-pagination',
+              clickable: true,
+          },
+      });
+    }
 
-// Load the first presentation on page load
-window.onload = loadPresentation;
-    </script>
+    // Load the first presentation on page load
+    window.onload = loadPresentation;
+  </script>
 </body>
 </html>

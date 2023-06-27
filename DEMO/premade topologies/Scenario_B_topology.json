@@ -1,0 +1,49 @@
+{
+    "nodes": [
+      {
+        "id": "Port Administration Central Broker",
+        "ip": "localhost",
+        "port": "1026",
+        "community": "Port Community",
+        "position": {
+          "x": 100,
+          "y": 150
+        }
+      },
+      {
+        "id": "Port Area A Broker",
+        "ip": "localhost",
+        "port": "1028",
+        "community": "Port Community",
+        "position": {
+          "x": 50,
+          "y": 350
+        }
+      },
+      {
+        "id": "Port Area B Broker",
+        "ip": "localhost",
+        "port": "1029",
+        "community": "Port Community",
+        "position": {
+          "x": 250,
+          "y": 350
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "Edge 1",
+        "source": "Port Area A Broker",
+        "target": "Port Administration Central Broker",
+        "topic": "All"
+      },
+      {
+        "id": "Edge 2",
+        "source": "Port Area B Broker",
+        "target": "Port Administration Central Broker",
+        "topic": "All"
+      }
+    ]
+  }
+  

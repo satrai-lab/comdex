@@ -817,7 +817,7 @@ def subscribe_for_advertisement_notification(broker, port, topics, expires, qos,
             topic2 = "provider/" + broker_remote + '/' + str(port_remote) + '/' + area_remote + '/' + context + '/' + truetype
             attr_str = topic2
             print(attr_str)
-
+                
             if topic2 in advertisement_exists.keys():
                 print("advertisement_already_exists")
                 return ()

@@ -1,5 +1,5 @@
 {
-    "id": "urn:ngsi-ld:GtfsAgency:Malaga_EMT",
+    "id": "urn:ngsi-ld:GtfsAgency:Malaga_EMaT",
     "type": "GtfsAgency",
     "agencyName": {
         "type": "Property",

@@ -1,0 +1,33 @@
+{
+    "nodes": [
+      {
+        "id": "Example 1",
+        "ip": "192.168.1.1",
+        "port": "1883",
+        "community": "Community 1",
+        "position": {
+          "x": 100,
+          "y": 350
+        }
+      },
+      {
+        "id": "Example 2",
+        "ip": "192.168.1.2",
+        "port": "1884",
+        "community": "Community 1",
+        "position": {
+          "x": 350,
+          "y": 150
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "Edge 1",
+        "source": "Example 1",
+        "target": "Example 2",
+        "topic": "Example Topic"
+      }
+    ]
+  }
+  

@@ -1,0 +1,204 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+    <title>ComDeX Interaction Tester</title>
+    <style>
+body {
+  background-color: #f0f0f0;
+  font-family: Arial, sans-serif;
+  margin: 0;
+  box-sizing: border-box;
+}
+
+.container {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto; /* centers the container */
+  box-shadow: 0 0 20px rgba(0,0,0,0.1);
+  background-color: white;
+  border-radius: 2px;
+  padding: 5px;
+}
+
+.home-button {
+  display: inline-block;
+  background-color: #21b3fc;
+  color: white;
+  padding: 10px 20px;
+  text-decoration: none;
+  font-weight: bold;
+  border-radius: 5px;
+  margin-bottom: 20px; /* adds some space below the home button */
+}
+
+.form-container,
+#commandForm {
+  flex: 1 0 300px;
+  margin: 10px;
+  padding: 20px;
+  border-radius: 10px;
+  background-color: #ffffff;
+  box-shadow: 0 0 10px rgba(0,0,0,0.1);
+}
+
+.form-container textarea,
+#commandForm textarea {
+  width: 100%;
+  min-height: 200px;
+  resize: vertical;
+}
+
+input[type=text],
+input[type=file],
+select,
+input[type=submit] {
+  width: 100%;
+  padding: 12px 20px;
+  margin: 8px 0;
+  display: inline-block;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  box-sizing: border-box;
+}
+
+input[type=submit] {
+  background-color: #4CAF50;
+  color: white;
+  cursor: pointer;
+}
+
+input[type=submit]:hover {
+  background-color: #45a049;
+}
+
+label {
+  margin-top: 10px;
+}
+
+#terminal,
+#terminal2 {
+  background-color: black;
+  color: lime;
+  font-family: monospace;
+  padding: 10px;
+}
+
+datalist {
+  margin-top: 5px;
+}
+
+#file::file-selector-button {
+  border-radius: 3px;
+  border: 1px solid #ccc;
+  background-color: #f0f0f0;
+  cursor: pointer;
+}
+
+#file::file-selector-button::before {
+  content: "Choose File";
+}
+
+#file:hover::file-selector-button::before {
+  color: #4caf50;
+}
+
+#file:valid::file-selector-button::before {
+  content: attr(data-file-selected);
+  color: #4caf50;
+}
+.modal {
+            display: none;
+            position: fixed;
+            z-index: 1;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            overflow: auto;
+            background-color: rgba(0, 0, 0, 0.4);
+        }
+        
+        .modal-content {
+            background-color: #fefefe;
+            margin: 15% auto;
+            padding: 20px;
+            border: 1px solid #888;
+            width: 80%;
+            max-height: 80%;
+            overflow-y: auto;
+        }
+        
+        /* Styling for the JSON content */
+        pre {
+            background-color: #f7f7f7;
+            padding: 10px;
+            font-size: 22px;
+            font-family: Consolas, Monaco, 'Courier New', monospace;
+        }
+    </style>
+</head>
+<body>
+    <a class="home-button" href="main_menu.html">Home</a>
+    <div class="container">
+        <div class="form-container">
+        <form id="form">
+            <textarea id="terminal" rows="40" cols="35" readonly></textarea>
+            
+        </form>
+        <div class="form2-container">
+            <form id="form2">
+                <textarea id="terminal2" rows="5" cols="33" readonly></textarea>
+                
+            </form>
+    </div>
+
+    </div>
+    <form id="commandForm">
+        <label for="command">Command:</label>
+        <input list="commands" id="command">
+        <datalist id="commands">
+            <option value="POST/entities">
+            <option value="POST/Subscriptions">
+            <option value="DELETE/entities/">
+            <option value="PATCH/entities/">
+            <option value="GET/entities/">
+            <option value="entityOperations/delete">
+            <option value="entityOperations/create">
+            <option value="entityOperations/update">
+            <option value="entityOperations/upsert">
+        </datalist>
+        <label for="file">File:</label>
+        <input type="file" id="file" accept=".json, .ldjson, .ngsi-ld, .ngsild"> 
+        <label for="broker_address">Broker address:</label>
+        <input type="text" id="broker_address">
+        <label for="port">Port:</label>
+        <input type="text" id="port">
+        <label for="qos">QoS:</label>
+        <select id="qos">
+            <option value="0">0</option>
+            <option value="1">1</option>
+            <option value="2">2</option>
+        </select>
+        <label for="HLink">HLink:</label>
+        <input type="text" id="HLink">
+        <label for="singleidadvertisement">Single ID Advertisement:</label>
+        <select id="singleidadvertisement">
+            <option value="0">0</option>
+            <option value="1">1</option>
+        </select>
+        <input type="submit" value="Submit">
+      <form>
+        <button id="CreateFederation">Extra:Create Federation based on configuration (.conf) files</button>
+      </form>
+    </form>    
+    
+    <script src="app2.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.2.0/styles/default.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.2.0/highlight.min.js"></script>
+</body>
+</html>

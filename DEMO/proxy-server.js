@@ -1,7 +1,9 @@
 const express = require('express');
 const { spawn } = require('child_process');
 const WebSocket = require('ws');
+const fs = require('fs');
 const path = require('path');
+const readline = require('readline');
 
 const app = express();
 const port = 3000;
@@ -16,10 +18,11 @@ app.listen(port, () => {
 // Setup WebSocket server
 const wss = new WebSocket.Server({ port: 8080 });
 
-const fs = require('fs');
+
 const childProcess = require('child_process');
 
 let childProcesses = [];
+let createdDirectories = [];
 
 wss.on('connection', ws => {
   console.log('New client connected');
@@ -36,21 +39,56 @@ wss.on('connection', ws => {
           let confFiles = files.filter(file => file.endsWith('.conf'));
 
           confFiles.forEach(confFile => {
-            const newProcess = childProcess.spawn('mosquitto', ['-c', confFile]);
-            childProcesses.push(newProcess);
-
-            newProcess.stdout.on('data', (data) => {
-              ws.send(data.toString());
+            // Read and parse the configuration file to find the persistence location
+            const rl = readline.createInterface({
+              input: fs.createReadStream(confFile),
+              output: process.stdout,
+              terminal: false
             });
 
-            newProcess.stderr.on('data', (data) => {
-              console.error(`stderr: ${data}`);
-              ws.send(data.toString());
+            let persistenceLocation = '';
+            rl.on('line', (line) => {
+              if (line.startsWith('persistence_location')) {
+                persistenceLocation = line.substring(line.indexOf(' ') + 1).trim();
+
+                // Remove quotes from the persistence location if they exist
+                if (persistenceLocation.startsWith('"') && persistenceLocation.endsWith('"')) {
+                  persistenceLocation = persistenceLocation.slice(1, -1);
+                }
+
+                console.log(`folders to create ${persistenceLocation}`);
+                // Create the directory if it does not exist
+                if (!fs.existsSync(persistenceLocation)) {
+                  fs.mkdirSync(persistenceLocation, { recursive: true });
+                  createdDirectories.push(persistenceLocation); // add the created directory to the array
+                }
+              }
             });
 
-            newProcess.on('close', (code) => {
-              console.log(`child process exited with code ${code}`);
-              ws.send(code.toString());
+
+
+            rl.on('close', () => {
+              // Only spawn the mosquitto process after the configuration file has been read completely
+              const newProcess = childProcess.spawn('mosquitto', ['-c', confFile]);
+              childProcesses.push(newProcess);
+
+              newProcess.stdout.on('data', (data) => {
+                ws.send(data.toString());
+              });
+
+              newProcess.stderr.on('data', (data) => {
+                console.error(`stderr: ${data}`);
+                ws.send(data.toString());
+              });
+
+              newProcess.on('close', (code) => {
+                console.log(`child process exited with code ${code}`);
+                ws.send(code.toString());
+                // Delete the persistence directory when the process exits
+                if (fs.existsSync(persistenceLocation)) {
+                  fs.rmdirSync(persistenceLocation, { recursive: true });
+                }
+              });
             });
           });
         }
@@ -109,14 +147,22 @@ process.on('SIGINT', () => {
     childProcess.kill('SIGINT');
   });
 
-  // Delete .conf files in the current folder
+  // Delete .conf and .Identifier files in the current folder
   const currentFolder = process.cwd();
   const files = fs.readdirSync(currentFolder);
   files.forEach((file) => {
-    if (file.endsWith('.conf')) {
-      const filePath = path.join(currentFolder, file);
+    const filePath = path.join(currentFolder, file);
+    if (file.endsWith('.conf') || file.endsWith('.Identifier')) {
       fs.unlinkSync(filePath);
       console.log(`Deleted file: ${filePath}`);
+    }
+  });
+
+  // Delete the created directories
+  createdDirectories.forEach((dir) => {
+    if (fs.existsSync(dir)) {
+      fs.rmdirSync(dir, { recursive: true });
+      console.log(`Deleted directory: ${dir}`);
     }
   });
 
