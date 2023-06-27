@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en-us">
+<head><meta charset="utf-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Installation - ComDeX Wiki</title>
+<meta name="description" content="ComDeX Demystified: A Complete Guide to Harnessing its Potential">
+<meta name="generator" content="Hugo 0.108.0">
+<link href="https://samsgblab.github.io/ComDeX//index.xml" rel="alternate" type="application/rss+xml">
+<link rel="canonical" href="https://samsgblab.github.io/ComDeX/tutorial/installation/">
+<link rel="stylesheet" href="https://samsgblab.github.io/ComDeX/css/theme.min.css">
+<link rel="stylesheet" href="https://samsgblab.github.io/ComDeX/css/chroma.min.css">
+<script defer src="https://samsgblab.github.io/ComDeX//js/fontawesome6/all.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jquery@3.6.0/dist/jquery.min.js" integrity="sha256-/xUj+3OJU5yExlq6GSYGSHk7tPXikynS7ogEvDej/m4=" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/jquery.easing@1.4.1/jquery.easing.min.js" integrity="sha256-H3cjtrm/ztDeuhCN9I4yh4iN2Ybx/y1RM7rMmAesA0k=" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/clipboard@2.0.11/dist/clipboard.min.js" integrity="sha256-4XodgW4TwIJuDtf+v6vDJ39FVxI0veC/kSCCmnFp7ck=" crossorigin="anonymous"></script>
+<script src="https://samsgblab.github.io/ComDeX/js/bundle.js"></script><style>
+:root {}
+</style>
+<meta property="og:title" content="Installation" />
+<meta property="og:description" content="ComDeX Demystified: A Complete Guide to Harnessing its Potential" />
+<meta property="og:type" content="website" />
+<meta property="og:url" content="https://samsgblab.github.io/ComDeX/tutorial/installation/" /><meta property="og:image" content="https://samsgblab.github.io/ComDeX/images/og-image.png"/><meta property="og:site_name" content="Hugo Techdoc Theme" />
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:image" content="https://samsgblab.github.io/ComDeX/images/og-image.png"/>
+
+<meta name="twitter:title" content="Installation"/>
+<meta name="twitter:description" content="ComDeX Demystified: A Complete Guide to Harnessing its Potential"/>
+<meta itemprop="name" content="Installation">
+<meta itemprop="description" content="ComDeX Demystified: A Complete Guide to Harnessing its Potential"></head>
+<body><div class="container"><header>
+<h1>ComDeX Wiki</h1><span class="version">Version 0.2.6</span>
+<p class="description">ComDeX Demystified: A Complete Guide to Harnessing its Potential</p>
+
+</header>
+<div class="global-menu">
+<nav>
+<ul>
+<li id="home" class=""><a href="/ComDeX/"><i class='fa fa-home'></i>&nbsp;Home</a></li>
+<li id="github" class="github-menu-item"><a href="https://github.com/SAMSGBLab/ComDeX"><i class='fa-brands fa-github'></i>&nbsp;Github <b>Code!</b></a></li></ul>
+</nav>
+</div>
+
+<div class="content-container">
+<main><h1>Installation</h1><h1 id="comdex-installation-guide">ComDeX Installation Guide</h1>
+<p>This guide will walk you through the steps to set up and run the ComDeX prototype on your local system. ComDeX is implemented in Python, but can easily be adapted to other languages.</p>
+<h2 id="requirements">Requirements</h2>
+<ol>
+<li>Python environment</li>
+<li>MQTT broker that supports message persistence and MQTT bridges creation</li>
+</ol>
+<p>For the Action Handler, you&rsquo;ll need the following Python libraries:</p>
+<ul>
+<li><code>paho-mqtt==1.6.1</code></li>
+<li><code>Shapely==1.8.1</code></li>
+</ul>
+<p>These dependencies are listed in the <code>requirements.txt</code> file for convenience.</p>
+<h2 id="installation-steps">Installation Steps</h2>
+<ol>
+<li>Install the required Python libraries using pip:</li>
+</ol>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>pip install -r requirements.txt
+</span></span></code></pre></div><ol start="2">
+<li>Once the installation is complete, you can view the available command-line arguments and their usage by executing:</li>
+</ol>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>python3 action_handler.py -h
+</span></span></code></pre></div><div class="panel panel-success"><div class="panel-header">
+<h3>Note</h3>
+</div><div class="panel-body">
+For complex setups with federations of ComDeX nodes, please refer to the demo and configuration sections of this wiki.
+</div>
+</div>
+
+<h2 id="sanity-check">Sanity Check</h2>
+<p>After setting up your environment, it&rsquo;s a good idea to run a quick sanity check.</p>
+<p>Here&rsquo;s an example of how to do it:</p>
+<p>In the same folder as &ldquo;actionhandler.py&rdquo;, create an entity example file, &ldquo;entity_example.ngsild&rdquo;, and a subscription file, &ldquo;subscription_example.ngsild&rdquo;. The contents for these files are provided in the repo.</p>
+<p>Then, create an entity and a subscription. You can do this in any order (either publish the entity before or after the subscription). Replace localhost and 1026 with the appropriate address and port of your MQTT broker:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>sudo python3 actionhandler.py -c POST/Subscriptions -f subscription_example.ngsild -b localhost -p <span style="color:#ae81ff">1026</span>
+</span></span><span style="display:flex;"><span>sudo python3 actionhandler.py -c POST/entities -f entity_example.ngsild -b localhost -p <span style="color:#ae81ff">1026</span>
+</span></span></code></pre></div><p>You should be able to see the subscribed attributes printed/returned at your terminal.</p>
+<p>Finally, you can also try &ldquo;getting&rdquo; the published entity, using the following command:</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-bash" data-lang="bash"><span style="display:flex;"><span>sudo python3 actionhandler.py -c GET/entities/?id<span style="color:#f92672">=</span>urn:ngsi-ld:GtfsAgency:Malaga_EMT -b localhost -p <span style="color:#ae81ff">1026</span>
+</span></span></code></pre></div><p>Happy experimentation!</p>
+<div class="edit-meta">
+Last updated on 8 Jun 2023
+
+
+<br>
+Published on 8 Jun 2023
+<br></div><nav class="pagination"><a class="nav nav-prev" href="https://samsgblab.github.io/ComDeX/tutorial/" title="Tutorials"><i class="fas fa-arrow-left" aria-hidden="true"></i>&nbsp;Prev - Tutorials</a>
+<a class="nav nav-next" href="https://samsgblab.github.io/ComDeX/tutorial/configuration/" title="Configuration">Next - Configuration <i class="fas fa-arrow-right" aria-hidden="true"></i></a>
+</nav><footer><p class="powered">Powered by <a href="https://gohugo.io">Hugo</a>. Theme by <a href="https://themes.gohugo.io/hugo-theme-techdoc/">TechDoc</a>. Designed by <a href="https://github.com/thingsym/hugo-theme-techdoc">Thingsym</a>.</p>
+</footer>
+</main>
+<div class="sidebar">
+
+<nav class="open-menu">
+<ul>
+<li class=""><a href="https://samsgblab.github.io/ComDeX/">Home</a></li>
+
+<li class=""><a href="https://samsgblab.github.io/ComDeX/background/">Background</a>
+  
+</li>
+
+<li class=""><a href="https://samsgblab.github.io/ComDeX/architecture/">ComDeX Architecture</a>
+  
+</li>
+
+<li class=""><a href="https://samsgblab.github.io/ComDeX/prototype/">Prototype Implementation</a>
+  
+<ul class="sub-menu">
+
+<li class=""><a href="https://samsgblab.github.io/ComDeX/prototype/documentation/">Code Documentation</a>
+  
+</li>
+
+<li class=""><a href="https://samsgblab.github.io/ComDeX/prototype/api/">ComDeX prototype API and current State of the implementation</a>
+  
+</li>
+</ul>
+  
+</li>
+
+<li class="parent"><a href="https://samsgblab.github.io/ComDeX/tutorial/">Tutorials</a>
+  
+<ul class="sub-menu">
+
+<li class=" active"><a href="https://samsgblab.github.io/ComDeX/tutorial/installation/">Installation</a>
+  
+</li>
+
+<li class=""><a href="https://samsgblab.github.io/ComDeX/tutorial/configuration/">Configuration</a>
+  
+</li>
+
+<li class=""><a href="https://samsgblab.github.io/ComDeX/tutorial/demos/">Demos</a>
+  
+<ul class="sub-menu">
+
+<li class=""><a href="https://samsgblab.github.io/ComDeX/tutorial/demos/multiple-communities-exploiting-a-federation-of-brokers/">Multiple Communities Exploiting a Federation of Brokers</a>
+  
+</li>
+
+<li class=""><a href="https://samsgblab.github.io/ComDeX/tutorial/demos/single-community-exploiting-a-central-broker/">Single Community Exploiting a Central Broker</a>
+  
+</li>
+
+<li class=""><a href="https://samsgblab.github.io/ComDeX/tutorial/demos/single-community-exploiting-a-federation-of-brokers/">Single Community Exploiting a Federation of Brokers</a>
+  
+</li>
+</ul>
+  
+</li>
+</ul>
+  
+</li>
+
+<li class=""><a href="https://samsgblab.github.io/ComDeX/future-developments/">RoadMap</a>
+  
+</li>
+
+<li class=""><a href="https://samsgblab.github.io/ComDeX/publications/">Publications</a>
+  
+</li>
+
+<li class=""><a href="https://samsgblab.github.io/ComDeX/contact/">Contact Us</a>
+  
+</li>
+
+
+</ul>
+</nav>
+
+
+
+<div class="sidebar-footer"></div>
+</div>
+
+</div><a href="#" id="backtothetop-fixed" class="backtothetop"
+ data-backtothetop-duration="600"
+ data-backtothetop-easing="easeOutQuart"
+ data-backtothetop-fixed-fadeIn="1000"
+ data-backtothetop-fixed-fadeOut="1000"
+ data-backtothetop-fixed-bottom="10"
+ data-backtothetop-fixed-right="20">
+<span class="fa-layers fa-fw">
+<i class="fas fa-circle"></i>
+<i class="fas fa-arrow-circle-up"></i>
+</span></a>
+</div>
+</body>
+</html>
