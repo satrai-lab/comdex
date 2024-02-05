@@ -19,7 +19,7 @@ An agile and decentralized system designed for the dynamic evolution of the Inte
 
 ## Overview
 
-ComDeX is a lightweight, federated NGSI-LD broker system that leverages open-source MQTT brokers. Initially conceived as a test suite for MQTT with [NGSI-LD](https://www.etsi.org/deliver/etsi_gs/CIM/001_099/009/01.01.01_60/gs_CIM009v010101p.pdf), it has evolved into a versatile Internet of Things (IoT) platform. Compared to traditional heavyweight NGSI-LD brokers favoring HTTP as a communication protocol, ComDeX offers end-to-end MQTT capabilities, including QoS delivery guarantees. For a deep dive into our prototype, refer to our [wiki](https://samsgblab.github.io/ComDeX/).
+ComDeX is a lightweight, federated NGSI-LD broker system that leverages open-source MQTT brokers. Initially conceived as a test suite for MQTT with [NGSI-LD](https://www.etsi.org/deliver/etsi_gs/CIM/001_099/009/01.01.01_60/gs_CIM009v010101p.pdf), it has evolved into a versatile Internet of Things (IoT) platform. Compared to traditional heavyweight NGSI-LD brokers favoring HTTP as a communication protocol, ComDeX offers end-to-end MQTT capabilities, including QoS delivery guarantees. For a deep dive into our prototype, refer to our [wiki](https://satrai-lab.github.io/comdex/).
 
 ## How It Works
 
@@ -132,7 +132,7 @@ As a nascent system and an ongoing project, ComDeX isn't a mature solution yet a
 We heartily welcome contributions! Feel free to submit a pull request.
 
 ## Contact
-For further inquiries, feel free to reach us at [papadakni@ics.forth.gr].
+For further inquiries, feel free to reach us at [nikolaos.papadakis@telecom-sudparis.eu].
 
 ## Acknowledgements
 This work is partly based on the NGSI-LD specification developed by ETSI. Our sincere thanks to the Greek RTDI Action “RESEARCH-CREATE-INNOVATE” (EΠA𝜈EK 2014-2020), Grant no. T2EΔK-02848 (SmartCityBus), for funding this research.
