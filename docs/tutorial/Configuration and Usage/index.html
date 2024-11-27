@@ -3,11 +3,11 @@
 <head><meta charset="utf-8">
 <meta http-equiv="X-UA-Compatible" content="IE=edge">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>ComDeX Architecture - ComDeX Wiki</title>
+<title>Configuration and usage - ComDeX Wiki</title>
 <meta name="description" content="ComDeX Demystified: A Complete Guide to Harnessing its Potential">
 <meta name="generator" content="Hugo 0.108.0">
 <link href="https://satrai-lab.github.io/comdex//index.xml" rel="alternate" type="application/rss+xml">
-<link rel="canonical" href="https://satrai-lab.github.io/comdex/architecture/">
+<link rel="canonical" href="https://satrai-lab.github.io/comdex/tutorial/configuration/">
 <link rel="stylesheet" href="https://satrai-lab.github.io/comdex/css/theme.min.css">
 <link rel="stylesheet" href="https://satrai-lab.github.io/comdex/css/chroma.min.css">
 <script defer src="https://satrai-lab.github.io/comdex//js/fontawesome6/all.min.js"></script>
@@ -17,16 +17,16 @@
 <script src="https://satrai-lab.github.io/comdex/js/bundle.js"></script><style>
 :root {}
 </style>
-<meta property="og:title" content="ComDeX Architecture" />
+<meta property="og:title" content="Configuration" />
 <meta property="og:description" content="ComDeX Demystified: A Complete Guide to Harnessing its Potential" />
 <meta property="og:type" content="website" />
-<meta property="og:url" content="https://satrai-lab.github.io/comdex/architecture/" /><meta property="og:image" content="https://satrai-lab.github.io/comdex/images/og-image.png"/><meta property="og:site_name" content="Hugo Techdoc Theme" />
+<meta property="og:url" content="https://satrai-lab.github.io/comdex/tutorial/configuration/" /><meta property="og:image" content="https://satrai-lab.github.io/comdex/images/og-image.png"/><meta property="og:site_name" content="Hugo Techdoc Theme" />
 <meta name="twitter:card" content="summary_large_image"/>
 <meta name="twitter:image" content="https://satrai-lab.github.io/comdex/images/og-image.png"/>
 
-<meta name="twitter:title" content="ComDeX Architecture"/>
+<meta name="twitter:title" content="Configuration"/>
 <meta name="twitter:description" content="ComDeX Demystified: A Complete Guide to Harnessing its Potential"/>
-<meta itemprop="name" content="ComDeX Architecture">
+<meta itemprop="name" content="Configuration">
 <meta itemprop="description" content="ComDeX Demystified: A Complete Guide to Harnessing its Potential"></head>
 <body><div class="container"><header>
     <h1>ComDeX Wiki</h1><span class="version">Version 0.2.7</span>
@@ -37,43 +37,20 @@
 <nav>
 <ul>
 <li id="home" class=""><a href="/ComDeX/"><i class='fa fa-home'></i>&nbsp;Home</a></li>
-<li id="github" class="github-menu-item"><a href="https://github.com/satrai-lab/comdex"><i class='fa-brands fa-github'></i>&nbsp;Github <b>Code!</b></a></li></ul>
+<li id="github" class="github-menu-item"><a href="https://github.com/SAMSGBLab/ComDeX"><i class='fa-brands fa-github'></i>&nbsp;Github <b>Code!</b></a></li></ul>
 </nav>
 </div>
 
 <div class="content-container">
-<main><h1>ComDeX Architecture</h1><h2 id="overview">Overview</h2>
-<p><em>ComDeX</em> is an advanced IoT platform designed to foster data sharing among diverse stakeholders in a smart community, enhancing operations and services. The architecture incorporates property graph-based entities and operates within a federated pub/sub broker network.</p>
-<p><img src="../images/Architecture.png" alt="Architecture Image" title="Architecture"></p>
-<h2 id="core-components">Core Components</h2>
-<p>The ComDeX architecture, focusing on property graph-based entities in a federated broker network, ensures scalability across di-
-verse IoT ecosystems. Entities, as representations of real-world objects, carry unique identifiers and types in URI format. They are
-associated with properties and relationships, manipulated through specific API actions in the ComDeX system. Brokers manage and
-distribute entity data within their operation domains. They organize entities in a hierarchical namespace structure, supporting both fine
-and coarse-grain CRUD actions. The ComDeX’s key characteristic is the broker federation, promoting efficient data exchange across
-communities. Brokers function as data providers or consumers, depending on the context. The advertisement mechanism, implemented via MQTT messages, ensures the visibility of new context information, keeping the network up-to-date. Action Handlers act as conduits between publishers/subscribers and brokers, validating API Actions and managing data flow within the system. They direct
-entity data to the appropriate broker, ensuring data integrity. The ComDeX system architecture is deliberately structured to ensure high scalability. It can seamlessly accommodate the heterogeneity of IoT ecosystems, spanning from straightforward single community setups to intricately woven multi-community networks.</p>
-<h3 id="federation-topology">Federation Topology</h3>
-<p>ComDeX operates within a federation of brokers. These autonomous brokers collaborate to conduct data discovery operations and connect following a predefined hierarchical hybrid topology, which can be based on smart domain separation, geographical areas, or both.</p>
-<h3 id="distributed-knowledge-base">Distributed Knowledge Base</h3>
-<p>The Distributed Knowledge Base is made up of schema files specifying the concepts of ComDeX’s information model. This model is based on property graphs and is adaptable to new data models by extending existing ones. The Knowledge Base also stores information about the current broker topology to assist new brokers wishing to join the system.</p>
-<h3 id="action-handler">Action Handler</h3>
-<p>The Action Handler provides an API for various clients (producers/consumers) to perform diverse &ldquo;Actions&rdquo;. These actions can be defined as any operation necessary for the exchange of information between clients and brokers. The Action Handler also utilizes several sub-components like the message routing component, provider lookup component, and policy manager to execute commands and manage data flows.</p>
-<div class="panel panel-notice"><div class="panel-header">
-<h3>Note!</h3>
-</div><div class="panel-body">
-Be sure to read the full paper of ComDeX for detailed explanation about the architectural design
-</div>
-</div>
-
+<main><h1>Configuration</h1><p>TBA</p>
 <div class="edit-meta">
 Last updated on 8 Jun 2023
 
 
 <br>
 Published on 8 Jun 2023
-<br></div><nav class="pagination"><a class="nav nav-prev" href="https://satrai-lab.github.io/comdex/" title="Homepage"><i class="fas fa-arrow-left" aria-hidden="true"></i>&nbsp;Prev - Homepage</a>
-<a class="nav nav-next" href="https://satrai-lab.github.io/comdex/prototype/" title="Prototype Implementation">Next - Prototype Implementation <i class="fas fa-arrow-right" aria-hidden="true"></i></a>
+<br></div><nav class="pagination"><a class="nav nav-prev" href="https://satrai-lab.github.io/comdex/tutorial/installation/" title="Installation"><i class="fas fa-arrow-left" aria-hidden="true"></i>&nbsp;Prev - Installation</a>
+<a class="nav nav-next" href="https://satrai-lab.github.io/comdex/tutorial/demos/" title="Demos">Next - Demos <i class="fas fa-arrow-right" aria-hidden="true"></i></a>
 </nav><footer><p class="powered">Powered by <a href="https://gohugo.io">Hugo</a>. Theme by <a href="https://themes.gohugo.io/hugo-theme-techdoc/">TechDoc</a>. Designed by <a href="https://github.com/thingsym/hugo-theme-techdoc">Thingsym</a>.</p>
 </footer>
 </main>
@@ -83,7 +60,7 @@ Published on 8 Jun 2023
 <ul>
 <li class=""><a href="https://satrai-lab.github.io/comdex/">Home</a></li>
 
-<li class=" active"><a href="https://satrai-lab.github.io/comdex/architecture/">ComDeX Architecture</a>
+<li class=""><a href="https://satrai-lab.github.io/comdex/architecture/">ComDeX Architecture</a>
   
 </li>
 
@@ -102,7 +79,7 @@ Published on 8 Jun 2023
   
 </li>
 
-<li class=""><a href="https://satrai-lab.github.io/comdex/tutorial/">Tutorials</a>
+<li class="parent"><a href="https://satrai-lab.github.io/comdex/tutorial/">Tutorials</a>
   
 <ul class="sub-menu">
 
@@ -110,7 +87,7 @@ Published on 8 Jun 2023
   
 </li>
 
-<li class=""><a href="https://satrai-lab.github.io/comdex/tutorial/Configuration and Usage/">Configuration and Usage</a>
+<li class=" active"><a href="https://satrai-lab.github.io/comdex/tutorial/configuration/">Configuration</a>
   
 </li>
 
