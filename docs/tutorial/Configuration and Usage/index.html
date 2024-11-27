@@ -42,7 +42,114 @@
 </div>
 
 <div class="content-container">
-<main><h1>Configuration</h1><p>TBA</p>
+    <main><h1>Configuration and Usage</h1><p>Below are the details to configure and use ComDeX through its command-line interface and to set up broker federations using MQTT bridges.</p>
+
+        <h2>Command-Line Usage</h2>
+        <p>ComDeX provides a flexible command-line interface for managing entities, subscriptions, and other operations.</p>
+        <pre><code>Usage:
+        python3 actionhandler.py [options]
+        </code></pre>
+        
+        <h3>Options</h3>
+        <table>
+        <thead>
+        <tr>
+        <th>Option</th>
+        <th>Long Form</th>
+        <th>Description</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr>
+        <td>-h</td>
+        <td>--help</td>
+        <td>Show help information about available commands and options.</td>
+        </tr>
+        <tr>
+        <td>-c</td>
+        <td>--command</td>
+        <td>Specify the operation to perform. Possible commands include:<br>
+        <ul>
+        <li>POST/entities</li>
+        <li>POST/Subscriptions</li>
+        <li>DELETE/entities/</li>
+        <li>PATCH/entities/</li>
+        <li>GET/entities/</li>
+        <li>entityOperations/delete</li>
+        <li>entityOperations/create</li>
+        <li>entityOperations/update</li>
+        <li>entityOperations/upsert</li>
+        </ul>
+        </td>
+        </tr>
+        <tr>
+        <td>-f</td>
+        <td>--file</td>
+        <td>Specify the input file for the command (e.g., an entity configuration file).</td>
+        </tr>
+        <tr>
+        <td>-b</td>
+        <td>--broker_address</td>
+        <td>Specify the MQTT broker address for the ComDeX node.</td>
+        </tr>
+        <tr>
+        <td>-p</td>
+        <td>--port</td>
+        <td>Specify the port number of the MQTT broker for the ComDeX node.</td>
+        </tr>
+        <tr>
+        <td>-q</td>
+        <td>--qos</td>
+        <td>Define the Quality of Service level (0, 1, or 2) for the command.</td>
+        </tr>
+        <tr>
+        <td>-H</td>
+        <td>--HLink</td>
+        <td>Provide the context link (HLink) for the GET request.</td>
+        </tr>
+        <tr>
+        <td>-A</td>
+        <td>--singleidadvertisement</td>
+        <td>Set to <code>1</code> to enable single ID advertisement; default is <code>0</code>.</td>
+        </tr>
+        </tbody>
+        </table>
+        
+        <p><strong>Example:</strong></p>
+        <pre><code>python3 actionhandler.py -c POST/entities -f entity.ngsild -b localhost -p 1026 -q 1 -H HLink -A 0
+        </code></pre>
+        
+        <h2>Setting Up Broker Federations</h2>
+        <p>ComDeX supports MQTT-based broker federation for propagating context between brokers. The implementation relies on advertisement messages containing:</p>
+        <ul>
+        <li>Provider ID</li>
+        <li>Broker address and port</li>
+        <li>Region covered</li>
+        <li>NGSI-LD entity context and type</li>
+        </ul>
+        
+        <h3>Configuration Guidelines</h3>
+        <p>To set up a federation:</p>
+        <ol>
+        <li>Configure MQTT bridges between brokers using advertisement messages to propagate exported contexts.</li>
+        <li>Ensure proper filtering to avoid redundant message transmissions and network overload.</li>
+        <li>Avoid bidirectional linkages in MQTT bridges to reduce network loops.</li>
+        </ol>
+        
+        <h3>Example MQTT Broker Configuration</h3>
+        <pre><code># Mosquitto .conf example for allowing all advertisements
+        max_queued_messages 4000
+        persistence true
+        persistence_location ./Port_Area_B_Broker/
+        log_dest stdout
+        listener 1029 localhost
+        allow_anonymous true
+        
+        connection Port_Area_B_Broker_to_Port_Administration_Central_Broker
+        address localhost:1026
+        topic provider/# out 2 "" ""
+        </code></pre>
+        <p>With this configuration, the broker propagates advertisements and entity data as defined.</p>
 <div class="edit-meta">
 Last updated on 8 Jun 2023
 
