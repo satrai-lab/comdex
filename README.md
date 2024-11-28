@@ -1,4 +1,4 @@
-# ComDeX Prototype Implementation
+# Implementation of the ComDeX Platform
 
 <div style="display: flex;">
   <img src="https://www.cidoc-crm.org/sites/default/files/ics-diskout-en.jpg" alt="logo1" width="500" height="150" style="border-right: 2px solid #ccc; padding-right: 10px;">
