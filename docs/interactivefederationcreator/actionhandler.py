@@ -7,7 +7,7 @@
 # - Shapely library
 # - paho-mqtt library
 
-# For more information and updates, visit: [https://github.com/SAMSGBLab/ComDeX]
+# For more information and updates, visit: [https://github.com/satrai-lab/comdex]
 
 from pickle import TRUE
 import sys
