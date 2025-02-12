@@ -2,10 +2,10 @@
 <rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
   <channel>
     <title>Installation on ComDeX Wiki</title>
-    <link>https://satrai-lab.github.io/comdex//tutorial/installation/</link>
+    <link>https://satrai-lab.github.io/comdex/tutorial/installation/</link>
     <description>Recent content in Installation on ComDeX Wiki</description>
     <generator>Hugo -- gohugo.io</generator>
     <language>en-us</language>
-    <lastBuildDate>Thu, 08 Jun 2023 00:00:00 +0000</lastBuildDate><atom:link href="https://satrai-lab.github.io/comdex//tutorial/installation/index.xml" rel="self" type="application/rss+xml" />
+    <lastBuildDate>Thu, 08 Jun 2023 00:00:00 +0000</lastBuildDate><atom:link href="https://satrai-lab.github.io/comdex/tutorial/installation/index.xml" rel="self" type="application/rss+xml" />
   </channel>
 </rss>

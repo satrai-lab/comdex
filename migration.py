@@ -1,7 +1,7 @@
 import os
 
 folder_path = "./docs"
-old_string = "samsgblab.github.io/ComDeX"
+old_string = "satrai-lab.github.io/comdex//"
 new_string = "satrai-lab.github.io/comdex/"
 
 for root, _, files in os.walk(folder_path):

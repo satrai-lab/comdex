@@ -2,17 +2,17 @@
 <rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
   <channel>
     <title>Archives on ComDeX Wiki</title>
-    <link>https://satrai-lab.github.io/comdex//archives/</link>
+    <link>https://satrai-lab.github.io/comdex/archives/</link>
     <description>Recent content in Archives on ComDeX Wiki</description>
     <generator>Hugo -- gohugo.io</generator>
     <language>en-us</language>
-    <lastBuildDate>Tue, 17 Nov 2020 15:26:15 +0000</lastBuildDate><atom:link href="https://satrai-lab.github.io/comdex//archives/index.xml" rel="self" type="application/rss+xml" />
+    <lastBuildDate>Tue, 17 Nov 2020 15:26:15 +0000</lastBuildDate><atom:link href="https://satrai-lab.github.io/comdex/archives/index.xml" rel="self" type="application/rss+xml" />
     <item>
       <title>Hello_world</title>
-      <link>https://satrai-lab.github.io/comdex//archives/posts/hello_world/</link>
+      <link>https://satrai-lab.github.io/comdex/archives/posts/hello_world/</link>
       <pubDate>Tue, 17 Oct 2017 14:00:45 +0000</pubDate>
       
-      <guid>https://satrai-lab.github.io/comdex//archives/posts/hello_world/</guid>
+      <guid>https://satrai-lab.github.io/comdex/archives/posts/hello_world/</guid>
       <description>aaaaaa
 vvvv
 aaa</description>
@@ -20,10 +20,10 @@ aaa</description>
     
     <item>
       <title>Hello_world2</title>
-      <link>https://satrai-lab.github.io/comdex//archives/blog/hello_world2/</link>
+      <link>https://satrai-lab.github.io/comdex/archives/blog/hello_world2/</link>
       <pubDate>Sun, 17 Dec 2017 14:00:45 +0000</pubDate>
       
-      <guid>https://satrai-lab.github.io/comdex//archives/blog/hello_world2/</guid>
+      <guid>https://satrai-lab.github.io/comdex/archives/blog/hello_world2/</guid>
       <description>aaaaaa
 vvvv
 aaa</description>
@@ -31,10 +31,10 @@ aaa</description>
     
     <item>
       <title>Hello_world2</title>
-      <link>https://satrai-lab.github.io/comdex//archives/entry/hello_world2/</link>
+      <link>https://satrai-lab.github.io/comdex/archives/entry/hello_world2/</link>
       <pubDate>Sun, 17 Dec 2017 14:00:45 +0000</pubDate>
       
-      <guid>https://satrai-lab.github.io/comdex//archives/entry/hello_world2/</guid>
+      <guid>https://satrai-lab.github.io/comdex/archives/entry/hello_world2/</guid>
       <description>aaaaaa
 vvvv
 aaa</description>
@@ -42,10 +42,10 @@ aaa</description>
     
     <item>
       <title>Hello_world2</title>
-      <link>https://satrai-lab.github.io/comdex//archives/hello_world2/</link>
+      <link>https://satrai-lab.github.io/comdex/archives/hello_world2/</link>
       <pubDate>Sun, 17 Dec 2017 14:00:45 +0000</pubDate>
       
-      <guid>https://satrai-lab.github.io/comdex//archives/hello_world2/</guid>
+      <guid>https://satrai-lab.github.io/comdex/archives/hello_world2/</guid>
       <description>aaaaaa
 vvvv
 aaa</description>
@@ -53,10 +53,10 @@ aaa</description>
     
     <item>
       <title>Hello_world1</title>
-      <link>https://satrai-lab.github.io/comdex//archives/blog/hello_world1/</link>
+      <link>https://satrai-lab.github.io/comdex/archives/blog/hello_world1/</link>
       <pubDate>Fri, 17 Nov 2017 14:00:45 +0000</pubDate>
       
-      <guid>https://satrai-lab.github.io/comdex//archives/blog/hello_world1/</guid>
+      <guid>https://satrai-lab.github.io/comdex/archives/blog/hello_world1/</guid>
       <description>aaaaaa
 vvvv
 aaa</description>
@@ -64,10 +64,10 @@ aaa</description>
     
     <item>
       <title>Hello_world1</title>
-      <link>https://satrai-lab.github.io/comdex//archives/entry/hello_world1/</link>
+      <link>https://satrai-lab.github.io/comdex/archives/entry/hello_world1/</link>
       <pubDate>Fri, 17 Nov 2017 14:00:45 +0000</pubDate>
       
-      <guid>https://satrai-lab.github.io/comdex//archives/entry/hello_world1/</guid>
+      <guid>https://satrai-lab.github.io/comdex/archives/entry/hello_world1/</guid>
       <description>aaaaaa
 vvvv
 aaa</description>
@@ -75,10 +75,10 @@ aaa</description>
     
     <item>
       <title>Hello_world1</title>
-      <link>https://satrai-lab.github.io/comdex//archives/hello_world1/</link>
+      <link>https://satrai-lab.github.io/comdex/archives/hello_world1/</link>
       <pubDate>Fri, 17 Nov 2017 14:00:45 +0000</pubDate>
       
-      <guid>https://satrai-lab.github.io/comdex//archives/hello_world1/</guid>
+      <guid>https://satrai-lab.github.io/comdex/archives/hello_world1/</guid>
       <description>aaaaaa
 vvvv
 aaa</description>
@@ -86,10 +86,10 @@ aaa</description>
     
     <item>
       <title>Hello_world</title>
-      <link>https://satrai-lab.github.io/comdex//archives/blog/hello_world/</link>
+      <link>https://satrai-lab.github.io/comdex/archives/blog/hello_world/</link>
       <pubDate>Tue, 17 Oct 2017 14:00:45 +0000</pubDate>
       
-      <guid>https://satrai-lab.github.io/comdex//archives/blog/hello_world/</guid>
+      <guid>https://satrai-lab.github.io/comdex/archives/blog/hello_world/</guid>
       <description>aaaaaa
 vvvv
 aaa</description>
@@ -97,10 +97,10 @@ aaa</description>
     
     <item>
       <title>Hello_world</title>
-      <link>https://satrai-lab.github.io/comdex//archives/entry/hello_world/</link>
+      <link>https://satrai-lab.github.io/comdex/archives/entry/hello_world/</link>
       <pubDate>Tue, 17 Oct 2017 14:00:45 +0000</pubDate>
       
-      <guid>https://satrai-lab.github.io/comdex//archives/entry/hello_world/</guid>
+      <guid>https://satrai-lab.github.io/comdex/archives/entry/hello_world/</guid>
       <description>aaaaaa
 vvvv
 aaa</description>
@@ -108,10 +108,10 @@ aaa</description>
     
     <item>
       <title>Hello_world</title>
-      <link>https://satrai-lab.github.io/comdex//archives/hello_world/</link>
+      <link>https://satrai-lab.github.io/comdex/archives/hello_world/</link>
       <pubDate>Tue, 17 Oct 2017 14:00:45 +0000</pubDate>
       
-      <guid>https://satrai-lab.github.io/comdex//archives/hello_world/</guid>
+      <guid>https://satrai-lab.github.io/comdex/archives/hello_world/</guid>
       <description>aaaaaa
 vvvv
 aaa</description>
