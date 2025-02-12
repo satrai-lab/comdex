@@ -1,8 +1,8 @@
 import os
 
 folder_path = "./docs"
-old_string = "satrai-lab.github.io/comdex//"
-new_string = "satrai-lab.github.io/comdex/"
+old_string = "/ComDeX/"
+new_string = "/comdex/"
 
 for root, _, files in os.walk(folder_path):
     for file in files:
