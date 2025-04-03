@@ -9,17 +9,25 @@ This work is the result of combined research from [ICS-FORTH](https://www.ics.fo
 
 An agile and decentralized system designed for the dynamic evolution of the Internet of Things (IoT)
 
-- [Overview](#overview)
-- [How It Works](#how-it-works)
-- [Installation](#installation)
-- [Limitations](#limitations)
-- [Contribution](#contribution)
-- [Contact](#contact)
-- [Acknowledgements](#acknowledgements)
+- [Implementation of the ComDeX Platform](#implementation-of-the-comdex-platform)
+  - [Overview](#overview)
+  - [How It Works](#how-it-works)
+    - [Action Handler](#action-handler)
+    - [MQTT Broker](#mqtt-broker)
+  - [Installation](#installation)
+    - [Requirements](#requirements)
+    - [Installation Steps](#installation-steps)
+    - [Sanity Check](#sanity-check)
+  - [Limitations](#limitations)
+  - [Contribution](#contribution)
+  - [Contact](#contact)
+  - [Acknowledgements](#acknowledgements)
 
 ## Overview
 
 ComDeX is a lightweight, federated NGSI-LD broker system that leverages open-source MQTT brokers. Initially conceived as a test suite for MQTT with [NGSI-LD](https://www.etsi.org/deliver/etsi_gs/CIM/001_099/009/01.01.01_60/gs_CIM009v010101p.pdf), it has evolved into a versatile Internet of Things (IoT) platform. Compared to traditional heavyweight NGSI-LD brokers favoring HTTP as a communication protocol, ComDeX offers end-to-end MQTT capabilities, including QoS delivery guarantees. For a deep dive into our prototype, refer to our [wiki](https://satrai-lab.github.io/comdex/).
+
+*Note: ComDeX also supports Federated Learning through the [ComDeX-FL extension](./comdex-FL), enabling collaborative model training across communities. More details and documentation are in progress.*
 
 ## How It Works
 
@@ -58,7 +66,7 @@ To view the list of available command-line arguments and their usage, execute
 python3 action_handler.py -h.
 ```
 
-> Note: For complex setups with federations of ComDeX nodes, be sure to check both the wiki and the [DEMO](https://github.com/SAMSGBLab/ComDeX/tree/main/DEMO) folder of this repo. 
+> Note: For complex setups with federations of ComDeX nodes, be sure to check both the wiki and the [DEMO](https://github.com/satrai-lab/comdex/tree/main/DEMO) folder of this repo. 
 
 ### Sanity Check
 To do a quick sanity check that everything has been setup correctly you can do the following:
