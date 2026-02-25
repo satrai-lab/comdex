@@ -5,8 +5,8 @@ import time
 import os
 
 def run_combined_test(test_name, server_args, client_args, timeout=60):
-    server_cmd = [sys.executable, "fl_comdex.py"] + server_args
-    client_cmd = [sys.executable, "fl_comdex.py"] + client_args
+    server_cmd = [sys.executable, "fl_collab.py"] + server_args
+    client_cmd = [sys.executable, "fl_collab.py"] + client_args
 
     print(f"\n[TEST] {test_name}")
     print("Server command:", " ".join(server_cmd))
@@ -48,7 +48,7 @@ def main():
             "server_args": [
                 "--role", "server",
                 "--membership-approach", "client_driven",
-                "--server-address", "[::]:8080",
+                "--server-address", "localhost:1027",
                 "--strategy-name", "fedavg",
                 "--job-id", "test_mnist",
                 "--num-rounds", "1",
@@ -59,7 +59,7 @@ def main():
             "client_args": [
                 "--role", "client",
                 "--membership-approach", "client_driven",
-                "--server-address", "[::]:8080",
+                "--server-address", "localhost:1027",
                 "--dataset", "mnist",
                 "--client-id", "mnist_client",
                 "--num-clients", "1",
@@ -71,11 +71,36 @@ def main():
             "server_args": [
                 "--role", "server",
                 "--membership-approach", "client_driven",
-                "--server-address", "[::]:8080",
+                "--server-address", "localhost:1027",
+                "--strategy-name", "fedavg",
+                "--job-id", "test_har",
+                "--num-rounds", "1",
+                "--dataset", "har",
+                "--experiment-mode",
+                "--required-participants", "1",
+                "--model-type", "har_cnn"
+            ],
+            "client_args": [
+                "--role", "client",
+                "--membership-approach", "client_driven",
+                "--server-address", "localhost:1027",
+                "--dataset", "har",
+                "--client-id", "har_client",
+                "--num-clients", "1",
+                "--experiment-mode",
+                "--model-type", "har_cnn"
+            ]
+        },
+        {
+            "name": "Cifar Experiment",
+            "server_args": [
+                "--role", "server",
+                "--membership-approach", "client_driven",
+                "--server-address", "localhost:1027",
                 "--strategy-name", "fedavg",
                 "--job-id", "test_cifar",
                 "--num-rounds", "1",
-                "--dataset", "har",
+                "--dataset", "cifar10",
                 "--experiment-mode",
                 "--required-participants", "1",
                 "--model-type", "tinycnn"
@@ -83,12 +108,12 @@ def main():
             "client_args": [
                 "--role", "client",
                 "--membership-approach", "client_driven",
-                "--server-address", "[::]:8080",
-                "--dataset", "har",
-                "--client-id", "har_client",
+                "--server-address", "localhost:1027",
+                "--dataset", "cifar10",
+                "--client-id", "cifar_client",
                 "--num-clients", "1",
                 "--experiment-mode",
-                "--model-type", "har_cnn"
+                "--model-type", "tinycnn"
             ]
         },
     ]
