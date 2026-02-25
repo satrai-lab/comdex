@@ -238,4 +238,4 @@ The script reads the CSV files under `results/` (and/or `../models/` depending o
 
 Example Output:
 
-![Highest Accuracy Per Strategy](./results/Highest_Accuracy_Per_Strategy.png)
+![Highest Accuracy Per Strategy](./Results/Highest_Accuracy_Per_Strategy.png)
