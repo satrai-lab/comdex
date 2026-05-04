@@ -1,0 +1,33 @@
+services:
+
+  broker1:
+    image: eclipse-mosquitto:2
+    container_name: broker1
+    ports:
+      - "1889:1889"
+    volumes:
+      - ./mosquitto/broker1/config:/mosquitto/config
+      - ./mosquitto/broker1/data:/mosquitto/data
+      - ./mosquitto/broker1/log:/mosquitto/log
+    networks:
+      - mqtt-net
+    restart: unless-stopped
+
+  broker2:
+    image: eclipse-mosquitto:2
+    container_name: broker2
+    ports:
+      - "1890:1890"
+    volumes:
+      - ./mosquitto/broker2/config:/mosquitto/config
+      - ./mosquitto/broker2/data:/mosquitto/data
+      - ./mosquitto/broker2/log:/mosquitto/log
+    networks:
+      - mqtt-net
+    restart: unless-stopped
+    depends_on:
+      - broker1
+
+networks:
+  mqtt-net:
+    driver: bridge
