@@ -6,7 +6,7 @@ ComDeX stores and exchanges NGSI-LD entity data over MQTT. The FastAPI layer mak
 
 ## Table Of Contents
 
-- [What This Project Provides](#what-this-project-provides)
+- [Project Overview](#project-overview)
 - [Important Production Rule](#important-production-rule)
 - [Architecture](#architecture)
 - [Requirements](#requirements)
@@ -14,6 +14,7 @@ ComDeX stores and exchanges NGSI-LD entity data over MQTT. The FastAPI layer mak
 - [Local Docker Broker Setup](#local-docker-broker-setup)
 - [Production Broker Setup](#production-broker-setup)
 - [Start The FastAPI Server](#start-the-fastapi-server)
+- [Copy JSON Examples](#copy-json-examples)
 - [Common Query Parameters](#common-query-parameters)
 - [Create An Entity](#create-an-entity)
 - [Query Entities](#query-entities)
@@ -34,20 +35,26 @@ ComDeX stores and exchanges NGSI-LD entity data over MQTT. The FastAPI layer mak
 - [WebSocket: Listen To Existing Subscription](#websocket-listen-to-existing-subscription)
 - [WebSocket: Create Subscription And Stream In One Connection](#websocket-create-subscription-and-stream-in-one-connection)
 - [Local Cross-Broker Test](#local-cross-broker-test)
+- [Run The Test Suite](#run-the-test-suite)
 - [Production Usage Checklist](#production-usage-checklist)
 - [Troubleshooting](#troubleshooting)
+- [Changes From The Original CLI Version](#changes-from-the-original-cli-version)
 
-## What This Project Provides
+## Project Overview
 
-- Create NGSI-LD entities
-- Query entities by type, id, attributes, query filters, geo filters, and context
-- Patch full entity attributes
-- Patch one attribute
-- Delete entities or attributes
-- Batch create, update, upsert, and delete
-- Create, list, get, and delete subscriptions
-- Receive subscription notifications over WebSocket
-- Use local Docker Mosquitto brokers or real production brokers
+ComDeX is an NGSI-LD data exchange layer built on top of MQTT. It stores entity attributes as MQTT retained messages and uses provider advertisement topics so other ComDeX nodes can discover where data is available.
+
+The original ComDeX implementation is mainly a Python CLI tool. This version keeps the same MQTT-based ComDeX model, but exposes it through a FastAPI gateway so applications written in different languages can interact with ComDeX over standard HTTP and WebSocket interfaces.
+
+The goal of this version is to make ComDeX easier to deploy, test, integrate, and operate in real client environments:
+
+- HTTP clients can create, query, patch, delete, and batch-process NGSI-LD data without calling a Python CLI directly.
+- WebSocket clients can receive live subscription notifications using a language-neutral interface.
+- FastAPI Swagger UI can be used as an interactive testing console for all main operations.
+- Docker-based Mosquitto brokers provide a reproducible local environment for testing single-broker and cross-broker flows.
+- Runtime management was improved with reusable MQTT publisher clients, cleaner shutdown behavior, provider-child subscription control, and integration tests.
+
+In short, this version turns the ComDeX CLI behavior into a service-oriented gateway suitable for API-based clients, demos, experiments, and production-style deployments.
 
 ## Important Production Rule
 
@@ -151,7 +158,9 @@ broker1: localhost:1889
 broker2: localhost:1890
 ```
 
-`broker1` bridges all topics to `broker2`.
+`broker1` bridges only provider advertisement topics to `broker2`.
+
+This is intentional. Entity data topics are not bridged. A remote subscriber first discovers a provider from the `provider/#` advertisement topic, then connects directly to the provider broker to receive the actual entity data.
 
 Start them:
 
@@ -187,6 +196,8 @@ qos = 1
 
 If data is published to one broker and subscriptions are created on another broker, the brokers must be bridged or otherwise share provider advertisements.
 
+Do not bridge all MQTT topics with `topic # both 0` for normal ComDeX operation. That would copy entity data between brokers and hide whether the subscription logic is really connecting to the advertised provider broker.
+
 The local demo bridge is configured in:
 
 ```text
@@ -198,8 +209,17 @@ Current local bridge:
 ```text
 connection bridge-to-broker2
 address broker2:1890
-topic # both 0
+topic provider/# out 0
 ```
+
+This means broker1 forwards provider advertisements to broker2. It does not forward:
+
+```text
+<area>/entities/...
+<area>/Subscriptions/...
+```
+
+For the current ComDeX flow, only `provider/#` needs to be shared between brokers. Subscription metadata stays local to the API instance, and entity data remains on the provider broker.
 
 For production, replace Docker service names and local ports with real reachable broker addresses.
 
@@ -232,6 +252,12 @@ If running on a server:
 ```text
 http://<server-ip-or-dns>:8000/docs
 ```
+
+## Copy JSON Examples
+
+Every JSON request or response example in this README is written as a fenced `json` code block. On GitHub, each code block automatically shows a copy button in the top-right corner when you hover over it.
+
+Click that copy button to copy the full JSON body directly to your clipboard, then paste it into FastAPI Swagger UI, Postman, curl, or your own client.
 
 ## Common Query Parameters
 
@@ -987,6 +1013,33 @@ qos = 1
 
 7. The WebSocket listener should receive a notification.
 
+## Run The Test Suite
+
+The integration unittest suite checks the main ComDeX FastAPI flows against the Docker Mosquitto brokers:
+
+- Entity POST, GET, PATCH, attribute DELETE, and entity DELETE
+- PATCH full entity and single attribute with `validate_exists=true` and `validate_exists=false`
+- Batch upsert, update, and delete
+- Subscription WebSocket delivery after POST and PATCH
+- Subscriptions by type, by entity ID, with watched attributes, and without watched attributes
+- List/get subscription endpoints
+- Provider child subscription removal
+- Parent subscription stop and clean WebSocket close
+
+Start the brokers first:
+
+```bash
+docker compose up -d
+```
+
+Then run:
+
+```bash
+python -m unittest tests.test_comdex_api -v
+```
+
+If FastAPI is not already running on `127.0.0.1:8000`, the tests start it temporarily and stop it when finished.
+
 ## Production Usage Checklist
 
 Before using this in production:
@@ -1028,3 +1081,48 @@ If cross-broker subscription does not work, confirm:
 - Broker bridge/federation is configured.
 - Provider topics are visible on the subscription broker.
 - QoS is set to `1`.
+
+## Changes From The Original CLI Version
+
+This version is based on the original ComDeX CLI action handler from:
+
+```text
+https://github.com/satrai-lab/comdex/blob/main/actionhandler.py
+```
+
+The original project exposes ComDeX mainly as a Python command-line tool. This version keeps the MQTT/NGSI-LD topic model, retained messages, provider advertisements, entity operations, and subscription logic, then adds an HTTP/WebSocket gateway and production-oriented runtime behavior.
+
+Main modifications added in this version:
+
+- Added `actionhandlerAPI.py`, a FastAPI layer exposing NGSI-LD-style HTTP endpoints.
+- Added Swagger/OpenAPI testing through FastAPI docs at `/docs`.
+- Added HTTP endpoints for:
+  - `POST /ngsi-ld/v1/entities`
+  - `GET /ngsi-ld/v1/entities`
+  - `PATCH /ngsi-ld/v1/entities/{entityId}/attrs`
+  - `PATCH /ngsi-ld/v1/entities/{entityId}/attrs/{attrName}`
+  - `DELETE /ngsi-ld/v1/entities/{entityId}`
+  - `DELETE /ngsi-ld/v1/entities/{entityId}/attrs/{attrName}`
+  - batch create, update, upsert, and delete operations
+  - subscription create, list, get, stop, and provider-child stop operations
+- Added WebSocket notification endpoints so clients in any language can subscribe and receive live data:
+  - `WS /ngsi-ld/v1/subscriptions/{subscriptionId}/ws`
+  - `WS /ngsi-ld/v1/subscriptions/ws`
+- Added `websocketlistener.py` as a simple client example for consuming subscription notifications.
+- Added Docker-based Mosquitto broker setup with `docker-compose.yml` and broker config folders.
+- Added support for two local brokers, useful for testing provider advertisements and cross-broker subscriptions.
+- Changed entity POST behavior to upsert-style publishing: posting an entity with an existing ID updates the retained entity data instead of failing as a duplicate.
+- Kept advertisement protection: provider advertisements are checked before publishing, so an existing advertisement is not republished unnecessarily.
+- Added reusable MQTT publisher clients for POST/PATCH paths to reduce repeated MQTT connection overhead.
+- Added optional PATCH existence validation:
+  - `validate_exists=true` keeps the safer behavior and checks that the entity exists before patching.
+  - `validate_exists=false` skips the existence check for faster updates when the client already knows the entity exists, but requires `hlink` and `entity_type`.
+- Added provider child process tracking for subscriptions.
+- Added an endpoint to stop only one provider child subscription while keeping the parent subscription active:
+  - `DELETE /ngsi-ld/v1/subscriptions/{subscriptionId}/providers`
+- Added protection so a stopped provider child is not immediately recreated from a retained provider advertisement.
+- Added queue filtering so WebSocket clients do not receive new notifications from a provider after that provider child subscription has been disabled.
+- Added clean parent subscription stop behavior: WebSocket clients receive a final `{"status": "stopped", "id": ...}` message before the connection closes.
+- Added FastAPI shutdown cleanup so Ctrl+C stops active subscription threads/processes and closes MQTT publisher clients.
+- Added a production-focused README with setup, API usage, WebSocket usage, Docker broker usage, and troubleshooting.
+- Added `tests/test_comdex_api.py`, an integration unittest suite covering entity lifecycle, PATCH variants, batch operations, subscriptions, WebSockets, provider child deletion, and clean shutdown behavior.

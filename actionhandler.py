@@ -1,11 +1,5 @@
 # ComDeX Action Handler Tool
 
-# Version: 0.6.1
-# Author: Nikolaos Papadakis 
-# Requirements:
-# - Python 3.7 or above
-# - Shapely library
-# - paho-mqtt library
 
 # For more information and updates, visit: [https://github.com/SAMSGBLab/ComDeX]
 
@@ -42,8 +36,39 @@ singleidadvertisement=False
 exists_topic=''
 full_data=''
 active_subscriptions = {}
+CONTEXT_SEPARATOR = "§"
 
     
+
+class PublisherClientPool:
+    def __init__(self):
+        self._clients = {}
+        self._locks = {}
+        self._pool_lock = threading.Lock()
+
+    def get(self, broker, port):
+        key = (broker, int(port))
+        with self._pool_lock:
+            client = self._clients.get(key)
+            if client is None or not client.is_connected():
+                client = mqtt.Client(clean_session=True)
+                client.connect(broker, int(port))
+                client.loop_start()
+                self._clients[key] = client
+                self._locks[key] = threading.Lock()
+            return client, self._locks[key]
+
+    def close_all(self):
+        with self._pool_lock:
+            for client in self._clients.values():
+                client.loop_stop()
+                client.disconnect()
+            self._clients.clear()
+            self._locks.clear()
+
+
+publisher_pool = PublisherClientPool()
+
 
 def _stop_process(process):
     if not process.is_alive():
@@ -53,6 +78,39 @@ def _stop_process(process):
     if process.is_alive():
         process.kill()
         process.join(timeout=2)
+
+
+def _provider_matches(provider, broker=None, port=None, area=None, context=None, entity_type=None):
+    if broker is not None and provider.get("broker") != broker:
+        return False
+    if port is not None and int(provider.get("port")) != int(port):
+        return False
+    if area is not None and provider.get("area") != area:
+        return False
+    if context is not None:
+        normalized_context = context.replace("/", CONTEXT_SEPARATOR)
+        if provider.get("context") != normalized_context:
+            return False
+    if entity_type is not None and provider.get("type") != entity_type:
+        return False
+    return True
+
+
+def _provider_public_info(provider_key, provider_entry):
+    provider = provider_entry["provider"]
+    processes = provider_entry.get("processes", [])
+    info = {
+        "key": provider_key,
+        "broker": provider["broker"],
+        "port": provider["port"],
+        "area": provider["area"],
+        "context": provider["context"].replace(CONTEXT_SEPARATOR, "/"),
+        "type": provider["type"],
+        "process_count": len(processes),
+        "alive_process_count": sum(1 for process in processes if process.is_alive()),
+        "process_ids": [process.pid for process in processes],
+    }
+    return info
 
 
 def stop_subscription(subscription_id):
@@ -66,9 +124,129 @@ def stop_subscription(subscription_id):
     subscription["thread"].join(timeout=5)
     for process in subscription.get("child_processes", []):
         _stop_process(process)
-    del active_subscriptions[subscription_id]
+    active_subscriptions.pop(subscription_id, None)
     print(f"Subscription {subscription_id} stopped")
     return True
+
+
+def stop_all_subscriptions():
+    stopped = []
+    for subscription_id in list(active_subscriptions.keys()):
+        if stop_subscription(subscription_id):
+            stopped.append(subscription_id)
+    return stopped
+
+
+def list_subscription_providers(subscription_id):
+    if subscription_id not in active_subscriptions:
+        return None
+    subscription = active_subscriptions[subscription_id]
+    provider_children = subscription.get("provider_children", {})
+    provider_lock = subscription.get("provider_lock")
+    if provider_lock is None:
+        return []
+    with provider_lock:
+        return [
+            _provider_public_info(provider_key, provider_entry)
+            for provider_key, provider_entry in provider_children.items()
+        ]
+
+
+def stop_subscription_provider(subscription_id, broker=None, port=None, area=None, context=None, entity_type=None):
+    if subscription_id not in active_subscriptions:
+        return None
+
+    subscription = active_subscriptions[subscription_id]
+    provider_children = subscription.get("provider_children", {})
+    provider_lock = subscription.get("provider_lock")
+    child_processes = subscription.get("child_processes", [])
+    disabled_provider_keys = subscription.get("disabled_provider_keys", set())
+    stopped = []
+
+    if provider_lock is None:
+        return []
+
+    with provider_lock:
+        matching_keys = [
+            provider_key
+            for provider_key, provider_entry in provider_children.items()
+            if _provider_matches(provider_entry["provider"], broker, port, area, context, entity_type)
+        ]
+
+        for provider_key in matching_keys:
+            provider_entry = provider_children.pop(provider_key)
+            disabled_provider_keys.add(provider_key)
+            for process in provider_entry.get("processes", []):
+                _stop_process(process)
+                if process in child_processes:
+                    child_processes.remove(process)
+            stopped.append(_provider_public_info(provider_key, provider_entry))
+
+    return stopped
+
+
+def close_publisher_clients():
+    publisher_pool.close_all()
+
+
+def _entity_context(data):
+    if '@context' not in data:
+        raise ValueError("Error, ngsi-ld entity without context")
+    if isinstance(data["@context"], str):
+        return data['@context'].replace("/", "§")
+    return data['@context'][0].replace("/", "§")
+
+
+def _entity_type_and_id(data):
+    if 'type' not in data:
+        raise ValueError("Error, ngsi-ld entity without a type")
+    if 'id' not in data:
+        raise ValueError("Error, ngsi-ld entity without a id")
+    return str(data['type']), str(data['id'])
+
+
+def _provider_topic(broker, port, my_area, context, entity_type, entity_id):
+    if singleidadvertisement:
+        return 'provider/' + broker + '/' + str(port) + '/' + my_area + '/' + context + '/' + entity_type + '/' + entity_id
+    return 'provider/' + broker + '/' + str(port) + '/' + my_area + '/' + context + '/' + entity_type
+
+
+def _publish_entity_attributes(client, data, my_area, context, entity_type, entity_id, qos):
+    curr_time = str(datetime.datetime.now())
+    time_rels = {"createdAt": [curr_time], "modifiedAt": [curr_time]}
+    for key, value in data.items():
+        if key in ("type", "id", "@context"):
+            continue
+
+        small_topic = my_area + '/entities/' + context + '/' + entity_type + '/LNA/' + entity_id + '/' + key
+        client.publish(small_topic, str(value), retain=True, qos=qos)
+
+        small_topic = my_area + '/entities/' + context + '/' + entity_type + '/LNA/' + entity_id + '/' + key + "_timerelsystem_CreatedAt"
+        client.publish(small_topic, str(time_rels["createdAt"]), retain=True, qos=qos)
+
+        small_topic = my_area + '/entities/' + context + '/' + entity_type + '/LNA/' + entity_id + '/' + key + "_timerelsystem_modifiedAt"
+        client.publish(small_topic, str(time_rels["modifiedAt"]), retain=True, qos=qos)
+    return time_rels
+
+
+def post_entity_upsert(data, my_area, broker, port, qos, my_loc):
+    entity_type, entity_id = _entity_type_and_id(data)
+    context = _entity_context(data)
+    advertisement_topic = _provider_topic(broker, port, my_area, context, entity_type, entity_id)
+    advertisement_exists = check_existence(broker, port, advertisement_topic)
+
+    client, publish_lock = publisher_pool.get(broker, port)
+    with publish_lock:
+        if not advertisement_exists:
+            curr_time = str(datetime.datetime.now())
+            payload = "Provider Message: { CreatedAt:" + str([curr_time]) + ",location:" + str(my_loc) + "}"
+            client.publish(advertisement_topic, payload, retain=True, qos=2)
+            print("Publishing message to provider table")
+            print(advertisement_topic)
+        _publish_entity_attributes(client, data, my_area, context, entity_type, entity_id, qos)
+
+    print("Entity upserted successfully: " + entity_id)
+    return entity_id
 
 
 #Function: post_entity
@@ -248,10 +426,11 @@ def check_existence(broker,port,topic):
 # Returns:
 #   - A list of received messages (entities) ordered via their id.
 
-def GET(broker, port, topics, expires, qos, limit=2000):
+def GET(broker, port, topics, expires, qos, limit=2000, idle_timeout=None, max_wait=None):
     run_flag = True
     messagez = []
     messages_by_id = {}
+    last_message_at = None
 
     # The callback for when a PUBLISH message is received from the server.
     def on_message(client, userdata, msg):
@@ -259,10 +438,12 @@ def GET(broker, port, topics, expires, qos, limit=2000):
         nonlocal expires
         nonlocal messages_by_id
         nonlocal limit
+        nonlocal last_message_at
         if msg.retain == 1:
             initial_topic = msg.topic.split('/')
             id = initial_topic[-2]
             messages_by_id.setdefault(id, []).append(msg)
+            last_message_at = time.perf_counter()
             if len(messages_by_id) == limit + 1:
                 expires -= 10000000
             else:
@@ -285,7 +466,15 @@ def GET(broker, port, topics, expires, qos, limit=2000):
     try:
         while run_flag:
             tic_toc = time.perf_counter()
-            if tic_toc - start > expires:
+            if max_wait is not None and tic_toc - start > max_wait:
+                run_flag = False
+            elif (
+                idle_timeout is not None
+                and last_message_at is not None
+                and tic_toc - last_message_at > idle_timeout
+            ):
+                run_flag = False
+            elif tic_toc - start > expires:
                 run_flag = False
     except:
         pass
@@ -687,7 +876,7 @@ def recreate_multiple_entities(messagez, query='', topics='', timee='', limit=20
 #   - watched_attributes: List of watched attributes for the subscriptions.
 # Returns: None
 
-def multiple_subscriptions(entity_type_flag, watched_attributes_flag, entity_id_flag, area, context, truetype, true_id, broker, port, qos, watched_attributes, notification_queue=None):
+def multiple_subscriptions(entity_type_flag, watched_attributes_flag, entity_id_flag, area, context, truetype, true_id, broker, port, qos, watched_attributes, notification_queue=None, provider_key=None):
     topic = []
     
     if entity_type_flag and watched_attributes_flag and entity_id_flag:
@@ -727,7 +916,7 @@ def multiple_subscriptions(entity_type_flag, watched_attributes_flag, entity_id_
         sys.exit(2)
     
     # Call the subscribe function with the generated topics
-    subscribe(broker, port, topic, qos, context_given=context, notification_queue=notification_queue)
+    subscribe(broker, port, topic, qos, context_given=context, notification_queue=notification_queue, provider_key=provider_key)
     
 
 
@@ -743,7 +932,7 @@ def multiple_subscriptions(entity_type_flag, watched_attributes_flag, entity_id_
 #   - context_given: Context value for entity comparison.
 # Returns: None
 
-def subscribe(broker, port, topics, qos, context_given, notification_queue=None):
+def subscribe(broker, port, topics, qos, context_given, notification_queue=None, provider_key=None):
     def on_connect(client, userdata, flags, rc):
         print("Connected with result code " + str(rc))
 
@@ -754,7 +943,14 @@ def subscribe(broker, port, topics, qos, context_given, notification_queue=None)
                 entity = recreate_single_entity(messagez, timee=0, context_given=context_given)
                 if entity is not None:
                     if notification_queue is not None:
-                        notification_queue.put(entity)
+                        if provider_key is not None:
+                            notification_queue.put({
+                                "__comdex_notification__": True,
+                                "provider_key": provider_key,
+                                "payload": entity,
+                            })
+                        else:
+                            notification_queue.put(entity)
                     else:
                         print(json.dumps(entity, indent=4, ensure_ascii=False))
         else:
@@ -787,11 +983,31 @@ def subscribe(broker, port, topics, qos, context_given, notification_queue=None)
 #   - true_id: Entity ID value for the subscriptions.
 # Returns: None
 
-def subscribe_for_advertisement_notification(broker, port, topics, qos, entity_type_flag, watched_attributes_flag, entity_id_flag, watched_attributes, true_id, expires=None, stop_event=None, notification_queue=None, child_processes=None):
+def subscribe_for_advertisement_notification(
+    broker,
+    port,
+    topics,
+    qos,
+    entity_type_flag,
+    watched_attributes_flag,
+    entity_id_flag,
+    watched_attributes,
+    true_id,
+    expires=None,
+    stop_event=None,
+    notification_queue=None,
+    child_processes=None,
+    provider_children=None,
+    provider_lock=None,
+    disabled_provider_keys=None,
+):
     run_flag = True
     advertisement_exists = {}
     jobs_to_terminate = {}
     child_processes = child_processes if child_processes is not None else []
+    provider_children = provider_children if provider_children is not None else {}
+    provider_lock = provider_lock if provider_lock is not None else threading.Lock()
+    disabled_provider_keys = disabled_provider_keys if disabled_provider_keys is not None else set()
 
     # The callback for when the client receives a CONNACK response from the server.
     def on_connect(client, userdata, flags, rc):
@@ -819,12 +1035,28 @@ def subscribe_for_advertisement_notification(broker, port, topics, qos, entity_t
             attr_str = topic2
             print(attr_str)
 
+            with provider_lock:
+                if topic2 in disabled_provider_keys:
+                    print("provider_disabled_for_subscription")
+                    return ()
+
             if topic2 in advertisement_exists.keys():
                 print("advertisement_already_exists")
                 return ()
             else:
                 print("found_brand_new_advertisement")
                 advertisement_exists.setdefault(topic2, [])
+                with provider_lock:
+                    provider_children[topic2] = {
+                        "provider": {
+                            "broker": broker_remote,
+                            "port": port_remote,
+                            "area": area_remote,
+                            "context": context,
+                            "type": truetype,
+                        },
+                        "processes": [],
+                    }
 
             topic = []
 
@@ -847,7 +1079,7 @@ def subscribe_for_advertisement_notification(broker, port, topics, qos, entity_t
                         entity_type_flag, watched_attributes_flag, entity_id_flag,
                         context_providers_areas[i], context, truetype, true_id,
                         context_providers_addresses[i], int(context_providers_ports[i]), qos, watched_attributes,
-                        notification_queue
+                        notification_queue, topic2
                     )
                 )
                 jobs.append(process)
@@ -856,6 +1088,8 @@ def subscribe_for_advertisement_notification(broker, port, topics, qos, entity_t
             print(jobs)
             jobs_to_terminate.setdefault(topic2, jobs)
             jobs_to_terminate[topic2] = jobs
+            with provider_lock:
+                provider_children[topic2]["processes"] = jobs
             for j in jobs:
                 print(j)
                 j.start()
@@ -877,6 +1111,8 @@ def subscribe_for_advertisement_notification(broker, port, topics, qos, entity_t
                 _stop_process(j)
                 if j in child_processes:
                     child_processes.remove(j)
+            with provider_lock:
+                provider_children.pop(topic2, None)
 
     client = mqtt.Client()
     client.on_connect = on_connect
@@ -903,6 +1139,8 @@ def subscribe_for_advertisement_notification(broker, port, topics, qos, entity_t
             _stop_process(j)
             if j in child_processes:
                 child_processes.remove(j)
+    with provider_lock:
+        provider_children.clear()
     client.loop_stop()
     client.disconnect()
     print("Subscription stopped, all children terminated.")
@@ -1055,6 +1293,9 @@ def post_subscription(data, broker, port, qos, my_area="unknown_area", notificat
     sub_expires = int(data['expires']) if 'expires' in data else None
     stop_event = threading.Event()
     child_processes = []
+    provider_children = {}
+    disabled_provider_keys = set()
+    provider_lock = threading.Lock()
     t = threading.Thread(
         target=subscribe_for_advertisement_notification,
         args=(broker, port, check_top, qos, entity_type_flag, watched_attributes_flag, entity_id_flag, watched_attributes, true_id),
@@ -1063,6 +1304,9 @@ def post_subscription(data, broker, port, qos, my_area="unknown_area", notificat
             "stop_event": stop_event,
             "notification_queue": notification_queue,
             "child_processes": child_processes,
+            "provider_children": provider_children,
+            "provider_lock": provider_lock,
+            "disabled_provider_keys": disabled_provider_keys,
         },
         daemon=True
     )
@@ -1078,7 +1322,10 @@ def post_subscription(data, broker, port, qos, my_area="unknown_area", notificat
         "created_at":  str(datetime.datetime.now()),
         "expires":     sub_expires,
         "status":      "active",
-        "child_processes": child_processes
+        "child_processes": child_processes,
+        "provider_children": provider_children,
+        "disabled_provider_keys": disabled_provider_keys,
+        "provider_lock": provider_lock
     }
     print(f"Subscription {sub_id} registered.")
     return sub_id
@@ -1109,52 +1356,63 @@ def delete_entity_attr(entity_id, attr_name, broker, port, hlink='+', my_area="u
     clear_retained(broker, port, top)
 
 
-def patch_entity(entity_id, data, broker, port, hlink='+', qos=0, my_area="unknown_area"):
+def patch_entity(entity_id, data, broker, port, hlink='+', qos=0, my_area="unknown_area",
+                 validate_exists=True, entity_type=None):
     if hlink != '+':
         hlink = hlink.replace("/", "§")
-    check_topic = '+/entities/' + hlink + '/+/+/' + entity_id + '/#'
-    if not check_existence(broker, port, check_topic):
-        raise ValueError(f"Entity {entity_id} does not exist")
-    tp = exists_topic.split("/")[-4]
-    if hlink == '+':
-        hlink = exists_topic.split("/")[-5]
-    client = mqtt.Client(clean_session=True)
-    client.connect(broker, port)
-    client.loop_start()
-    for key in data.items():
-        if key[0] not in ("type", "id", "@context"):
-            small_topic = my_area + '/entities/' + hlink + '/' + tp + '/LNA/' + entity_id + '/' + key[0]
-            client.publish(small_topic, str(key[1]), retain=True, qos=qos)
-            curr_time = str(datetime.datetime.now())
-            small_topic = my_area + '/entities/' + hlink + '/' + tp + '/LNA/' + entity_id + '/' + key[0] + "_timerelsystem_modifiedAt"
-            client.publish(small_topic, str([curr_time]), retain=True, qos=qos)
-    client.loop_stop()
+    if validate_exists:
+        check_topic = '+/entities/' + hlink + '/+/+/' + entity_id + '/#'
+        if not check_existence(broker, port, check_topic):
+            raise ValueError(f"Entity {entity_id} does not exist")
+        tp = exists_topic.split("/")[-4]
+        if hlink == '+':
+            hlink = exists_topic.split("/")[-5]
+    else:
+        if hlink == '+' or not entity_type:
+            raise ValueError("validate_exists=false requires hlink and entity_type")
+        tp = entity_type
+
+    client, publish_lock = publisher_pool.get(broker, port)
+    with publish_lock:
+        for key in data.items():
+            if key[0] not in ("type", "id", "@context"):
+                small_topic = my_area + '/entities/' + hlink + '/' + tp + '/LNA/' + entity_id + '/' + key[0]
+                client.publish(small_topic, str(key[1]), retain=True, qos=qos)
+                curr_time = str(datetime.datetime.now())
+                small_topic = my_area + '/entities/' + hlink + '/' + tp + '/LNA/' + entity_id + '/' + key[0] + "_timerelsystem_modifiedAt"
+                client.publish(small_topic, str([curr_time]), retain=True, qos=qos)
 
 
-def patch_entity_attr(entity_id, attr_name, data, broker, port, hlink='+', qos=0, my_area="unknown_area"):
+def patch_entity_attr(entity_id, attr_name, data, broker, port, hlink='+', qos=0, my_area="unknown_area",
+                      validate_exists=True, entity_type=None):
     if hlink != '+':
         hlink = hlink.replace("/", "§")
-    check_topic = my_area + '/entities/' + hlink + '/+/+/' + entity_id + '/#'
-    if not check_existence(broker, port, check_topic):
-        raise ValueError(f"Entity {entity_id} does not exist")
-    tp = exists_topic.split("/")[-4]
-    loc = exists_topic.split("/")[-3]
-    if hlink == '+':
-        hlink = exists_topic.split("/")[-5]
-    client = mqtt.Client(clean_session=True)
-    client.connect(broker, port)
-    client.loop_start()
-    small_topic = my_area + '/entities/' + hlink + '/' + tp + '/' + loc + '/' + entity_id + '/' + attr_name
-    client.publish(small_topic, str(data), retain=True, qos=qos)
-    curr_time = str(datetime.datetime.now())
-    small_topic = my_area + '/entities/' + hlink + '/' + tp + '/LNA/' + entity_id + '/' + attr_name + "_timerelsystem_modifiedAt"
-    client.publish(small_topic, str([curr_time]), retain=True, qos=qos)
-    client.loop_stop()
+    if validate_exists:
+        check_topic = my_area + '/entities/' + hlink + '/+/+/' + entity_id + '/#'
+        if not check_existence(broker, port, check_topic):
+            raise ValueError(f"Entity {entity_id} does not exist")
+        tp = exists_topic.split("/")[-4]
+        loc = exists_topic.split("/")[-3]
+        if hlink == '+':
+            hlink = exists_topic.split("/")[-5]
+    else:
+        if hlink == '+' or not entity_type:
+            raise ValueError("validate_exists=false requires hlink and entity_type")
+        tp = entity_type
+        loc = 'LNA'
+
+    client, publish_lock = publisher_pool.get(broker, port)
+    with publish_lock:
+        small_topic = my_area + '/entities/' + hlink + '/' + tp + '/' + loc + '/' + entity_id + '/' + attr_name
+        client.publish(small_topic, str(data), retain=True, qos=qos)
+        curr_time = str(datetime.datetime.now())
+        small_topic = my_area + '/entities/' + hlink + '/' + tp + '/LNA/' + entity_id + '/' + attr_name + "_timerelsystem_modifiedAt"
+        client.publish(small_topic, str([curr_time]), retain=True, qos=qos)
 
 
 def get_entities(broker, port, hlink='+', entity_type=None, entity_id=None, attrs=None,
                  q=None, georel=None, geometry=None, coordinates=None,
-                 geoproperty='location', area=None, limit=1800, timee=None):
+                 geoproperty='location', area=None, limit=1800, timee=None, fast=False):
     if hlink != '+':
         hlink = hlink.replace("/", "§")
     area = area or ['+']
@@ -1180,7 +1438,14 @@ def get_entities(broker, port, hlink='+', entity_type=None, entity_id=None, attr
                 t = "+" if typee == "#" else typee
                 check_top.append("provider/+/+/" + z + '/' + hlink + '/' + t + '/' + id)
 
-        messages_for_context = GET(broker, port, check_top, 0.1, 1)
+        if fast:
+            messages_for_context = GET(
+                broker, port, check_top, 0.1, 1,
+                idle_timeout=0.03,
+                max_wait=0.5,
+            )
+        else:
+            messages_for_context = GET(broker, port, check_top, 0.1, 1)
         if typee == "#":
             typee = "+"
         context_providers_full = []
@@ -1200,7 +1465,14 @@ def get_entities(broker, port, hlink='+', entity_type=None, entity_id=None, attr
                     topic.append(initial_topic[3] + '/entities/' + hlink + '/' + typee + '/#')
                 else:
                     topic.append(initial_topic[3] + '/entities/' + hlink + '/' + typee + '/+/' + id + '/#')
-            messages = GET(initial_topic[1], int(initial_topic[2]), topic, 0.5, 1, limit)
+            if fast:
+                messages = GET(
+                    initial_topic[1], int(initial_topic[2]), topic, 0.5, 1, limit,
+                    idle_timeout=0.03,
+                    max_wait=0.75,
+                )
+            else:
+                messages = GET(initial_topic[1], int(initial_topic[2]), topic, 0.5, 1, limit)
             if messages:
                 context_for_reconstruction = '' if hlink == '+' else hlink
                 results = recreate_multiple_entities(messages, q, attrs, timee=timee, limit=limit,

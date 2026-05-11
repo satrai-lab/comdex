@@ -3,6 +3,7 @@ import json
 import multiprocessing
 import queue
 import threading
+import time
 from typing import List, Optional
 
 from fastapi import FastAPI, HTTPException, Path, Query, WebSocket, WebSocketDisconnect
@@ -14,6 +15,7 @@ from actionhandler import (
     batch_delete,
     batch_update,
     batch_upsert,
+    close_publisher_clients,
     default_broker_adress,
     default_broker_port,
     delete_entity,
@@ -22,18 +24,87 @@ from actionhandler import (
     patch_entity,
     patch_entity_attr,
     post_entity,
+    post_entity_upsert,
     post_subscription,
+    list_subscription_providers,
+    stop_all_subscriptions,
+    stop_subscription_provider,
     stop_subscription,
 )
 
 # Per-subscription notification queues (populated by POST /subscriptions)
 notification_queues: dict = {}
+QUEUE_WAIT_SECONDS = 0.005
 
 app = FastAPI(
     title="ComDeX NGSI-LD API",
     description="NGSI-LD compliant API over MQTT using ComDeX",
     version="0.6.1",
 )
+
+
+@app.on_event("shutdown")
+def shutdown_runtime_resources():
+    stopped = stop_all_subscriptions()
+    if stopped:
+        print(f"Stopped subscriptions on shutdown: {stopped}")
+    notification_queues.clear()
+    close_publisher_clients()
+
+
+def notification_payload_for_subscription(subscription_id: str, item):
+    if not isinstance(item, dict) or not item.get("__comdex_notification__"):
+        return item
+
+    provider_key = item.get("provider_key")
+    subscription = active_subscriptions.get(subscription_id)
+    if subscription is not None and provider_key:
+        provider_lock = subscription.get("provider_lock")
+        if provider_lock is not None:
+            with provider_lock:
+                if provider_key in subscription.get("disabled_provider_keys", set()):
+                    return None
+
+    return item.get("payload")
+
+
+async def send_next_notifications(websocket: WebSocket, notification_q, loop, subscription_id: str):
+    while True:
+        item = await loop.run_in_executor(
+            None, lambda: notification_q.get(timeout=QUEUE_WAIT_SECONDS)
+        )
+        entity = notification_payload_for_subscription(subscription_id, item)
+        if entity is None:
+            continue
+        await websocket.send_json(entity)
+        break
+
+    while True:
+        try:
+            item = notification_q.get_nowait()
+        except queue.Empty:
+            break
+        entity = notification_payload_for_subscription(subscription_id, item)
+        if entity is None:
+            continue
+        await websocket.send_json(entity)
+
+
+def drain_notification_queue(subscription_id: str, quiet_seconds: float = 0.1, max_seconds: float = 1.0):
+    notification_q = notification_queues.get(subscription_id)
+    if notification_q is None:
+        return 0
+    drained = 0
+    deadline = time.monotonic() + max_seconds
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return drained
+        try:
+            notification_q.get(timeout=min(quiet_seconds, remaining))
+            drained += 1
+        except queue.Empty:
+            return drained
 
 
 # ---------------------------------------------------------------------------
@@ -47,10 +118,12 @@ def create_entity(
     broker: str = Query(default_broker_adress, description="MQTT broker address"),
     port: int = Query(default_broker_port, description="MQTT broker port"),
     qos: int = Query(0, description="MQTT QoS level (0, 1 or 2)"),
+    my_area: str = Query("unknown_area"),
+    my_loc: str = Query("unknown_location"),
 ):
     try:
-        post_entity(body, "unknown_area", broker, port, qos, "unknown_location")
-        return {"status": "created", "id": body.get("id")}
+        post_entity_upsert(body, my_area, broker, port, qos, my_loc)
+        return {"status": "upserted", "id": body.get("id")}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -116,9 +189,11 @@ def update_entity_attrs(
     hlink: str = Query("+"),
     qos: int = Query(0),
     my_area: str = Query("unknown_area"),
+    validate_exists: bool = Query(True, description="Check entity existence before patching"),
+    entity_type: Optional[str] = Query(None, description="Required when validate_exists=false"),
 ):
     try:
-        patch_entity(entityId, body, broker, port, hlink, qos, my_area)
+        patch_entity(entityId, body, broker, port, hlink, qos, my_area, validate_exists, entity_type)
         return {"status": "updated", "id": entityId}
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -135,9 +210,11 @@ def update_entity_attr(
     hlink: str = Query("+"),
     qos: int = Query(0),
     my_area: str = Query("unknown_area"),
+    validate_exists: bool = Query(True, description="Check entity existence before patching"),
+    entity_type: Optional[str] = Query(None, description="Required when validate_exists=false"),
 ):
     try:
-        patch_entity_attr(entityId, attrName, body, broker, port, hlink, qos, my_area)
+        patch_entity_attr(entityId, attrName, body, broker, port, hlink, qos, my_area, validate_exists, entity_type)
         return {"status": "updated", "id": entityId, "attr": attrName}
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -271,6 +348,7 @@ def list_subscriptions():
             "created_at": info["created_at"],
             "expires":    info["expires"],
             "status":     info["status"],
+            "providers":   list_subscription_providers(sub_id) or [],
         }
         for sub_id, info in active_subscriptions.items()
     ]
@@ -291,6 +369,51 @@ def get_subscription(subscriptionId: str = Path(...)):
         "created_at": info["created_at"],
         "expires":    info["expires"],
         "status":     info["status"],
+        "providers":   list_subscription_providers(subscriptionId) or [],
+    }
+
+
+@app.get("/ngsi-ld/v1/subscriptions/{subscriptionId}/providers", tags=["Subscriptions"],
+         summary="List provider child processes for a subscription")
+def get_subscription_providers(subscriptionId: str = Path(...)):
+    providers = list_subscription_providers(subscriptionId)
+    if providers is None:
+        raise HTTPException(status_code=404, detail=f"Subscription {subscriptionId} not found")
+    return providers
+
+
+@app.delete("/ngsi-ld/v1/subscriptions/{subscriptionId}/providers", tags=["Subscriptions"],
+            summary="Stop provider child process(es) for a subscription")
+def remove_subscription_provider(
+    subscriptionId: str = Path(...),
+    provider_broker: Optional[str] = Query(None, description="Provider broker address to stop"),
+    provider_port: Optional[int] = Query(None, description="Provider broker port to stop"),
+    area: Optional[str] = Query(None, description="Provider area filter"),
+    context: Optional[str] = Query(None, description="Provider context/HLink filter"),
+    entity_type: Optional[str] = Query(None, description="Provider entity type filter"),
+):
+    if all(value is None for value in (provider_broker, provider_port, area, context, entity_type)):
+        raise HTTPException(status_code=400, detail="At least one provider filter is required")
+    stopped = stop_subscription_provider(
+        subscriptionId,
+        broker=provider_broker,
+        port=provider_port,
+        area=area,
+        context=context,
+        entity_type=entity_type,
+    )
+    if stopped is None:
+        raise HTTPException(status_code=404, detail=f"Subscription {subscriptionId} not found")
+    if not stopped:
+        raise HTTPException(status_code=404, detail="No matching provider child process found")
+    drained = drain_notification_queue(subscriptionId)
+    remaining = list_subscription_providers(subscriptionId) or []
+    return {
+        "status": "provider_stopped",
+        "id": subscriptionId,
+        "providers": stopped,
+        "remaining_providers": remaining,
+        "drained_notifications": drained,
     }
 
 
@@ -342,6 +465,7 @@ async def subscription_notifications_ws(websocket: WebSocket, subscriptionId: st
         entity_id=entity_id or None,
         attrs=watched_attributes,
         limit=1800,
+        fast=True,
     )
     for entity in snapshot:
         await websocket.send_json(entity)
@@ -350,10 +474,7 @@ async def subscription_notifications_ws(websocket: WebSocket, subscriptionId: st
     try:
         while subscriptionId in active_subscriptions:
             try:
-                entity = await loop.run_in_executor(
-                    None, lambda: notification_q.get(timeout=0.1)
-                )
-                await websocket.send_json(entity)
+                await send_next_notifications(websocket, notification_q, loop, subscriptionId)
             except queue.Empty:
                 continue
         await websocket.send_json({"status": "stopped", "id": subscriptionId})
@@ -405,10 +526,7 @@ async def subscription_websocket(websocket: WebSocket):
     try:
         while True:
             try:
-                entity = await loop.run_in_executor(
-                    None, lambda: notification_q.get(timeout=0.1)
-                )
-                await websocket.send_json(entity)
+                await send_next_notifications(websocket, notification_q, loop, sub_id)
             except queue.Empty:
                 continue
     except WebSocketDisconnect:
