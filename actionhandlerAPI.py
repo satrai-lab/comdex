@@ -8,6 +8,7 @@ from typing import List, Optional
 
 from fastapi import FastAPI, HTTPException, Path, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
+from websockets.exceptions import ConnectionClosed
 
 from actionhandler import (
     active_subscriptions,
@@ -35,6 +36,7 @@ from actionhandler import (
 # Per-subscription notification queues (populated by POST /subscriptions)
 notification_queues: dict = {}
 QUEUE_WAIT_SECONDS = 0.005
+WS_CLOSED_EXCEPTIONS = (WebSocketDisconnect, ConnectionClosed)
 
 app = FastAPI(
     title="ComDeX NGSI-LD API",
@@ -477,9 +479,12 @@ async def subscription_notifications_ws(websocket: WebSocket, subscriptionId: st
                 await send_next_notifications(websocket, notification_q, loop, subscriptionId)
             except queue.Empty:
                 continue
-        await websocket.send_json({"status": "stopped", "id": subscriptionId})
-        await websocket.close(code=1000)
-    except WebSocketDisconnect:
+        try:
+            await websocket.send_json({"status": "stopped", "id": subscriptionId})
+            await websocket.close(code=1000)
+        except WS_CLOSED_EXCEPTIONS:
+            pass
+    except WS_CLOSED_EXCEPTIONS:
         pass  # subscription keeps running — client can reconnect
 
 
@@ -529,7 +534,7 @@ async def subscription_websocket(websocket: WebSocket):
                 await send_next_notifications(websocket, notification_q, loop, sub_id)
             except queue.Empty:
                 continue
-    except WebSocketDisconnect:
+    except WS_CLOSED_EXCEPTIONS:
         stop_subscription(sub_id)
 
 

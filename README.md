@@ -253,11 +253,7 @@ If running on a server:
 http://<server-ip-or-dns>:8000/docs
 ```
 
-## Copy JSON Examples
 
-Every JSON request or response example in this README is written as a fenced `json` code block. On GitHub, each code block automatically shows a copy button in the top-right corner when you hover over it.
-
-Click that copy button to copy the full JSON body directly to your clipboard, then paste it into FastAPI Swagger UI, Postman, curl, or your own client.
 
 ## Common Query Parameters
 
@@ -363,6 +359,25 @@ If the entity already exists:
 }
 ```
 
+Curl command:
+
+```bash
+curl -X POST "http://localhost:8000/ngsi-ld/v1/entities?broker=localhost&port=1889&qos=1" \
+  -H "Content-Type: application/json" \
+  -d '{
+  "id": "urn:ngsi-ld:GtfsAgency:Malaga_EMT",
+  "type": "GtfsAgency",
+  "agencyName": {"type": "Property", "value": "Empresa Malaguena de Transportes"},
+  "language": {"type": "Property", "value": "EN"},
+  "page": {"type": "Property", "value": "http://www.emtmalaga.es/"},
+  "timezone": {"type": "Property", "value": "Europe/Madrid"},
+  "@context": [
+    "https://smartdatamodels.org/context.jsonld",
+    "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld"
+  ]
+}'
+```
+
 ## Query Entities
 
 Endpoint:
@@ -408,6 +423,32 @@ q = language==EN
 broker = localhost
 port = 1889
 hlink = +
+```
+
+Curl commands:
+
+Query by type:
+
+```bash
+curl "http://localhost:8000/ngsi-ld/v1/entities?type=GtfsAgency&broker=localhost&port=1889&hlink=%2B&limit=1800"
+```
+
+Query by id:
+
+```bash
+curl "http://localhost:8000/ngsi-ld/v1/entities?id=urn:ngsi-ld:GtfsAgency:Malaga_EMT&broker=localhost&port=1889&hlink=%2B"
+```
+
+Return only selected attributes:
+
+```bash
+curl "http://localhost:8000/ngsi-ld/v1/entities?type=GtfsAgency&attrs=agencyName,language&broker=localhost&port=1889&hlink=%2B"
+```
+
+Query by attribute value:
+
+```bash
+curl "http://localhost:8000/ngsi-ld/v1/entities?type=GtfsAgency&q=language%3D%3DEN&broker=localhost&port=1889&hlink=%2B"
 ```
 
 ## Patch Full Entity Attributes
@@ -461,6 +502,18 @@ Expected response:
 
 Do not include `id`, `type`, or `@context` in this PATCH body.
 
+Curl command:
+
+```bash
+curl -X PATCH "http://localhost:8000/ngsi-ld/v1/entities/urn:ngsi-ld:GtfsAgency:Malaga_EMT/attrs?broker=localhost&port=1889&qos=1&hlink=%2B&my_area=unknown_area" \
+  -H "Content-Type: application/json" \
+  -d '{
+  "agencyName": {"type": "Property", "value": "Empresa Malaguena de Transportes UPDATED"},
+  "language": {"type": "Property", "value": "ES"},
+  "timezone": {"type": "Property", "value": "Europe/Paris"}
+}'
+```
+
 ## Patch One Attribute
 
 Endpoint:
@@ -501,6 +554,14 @@ Expected response:
 
 For this single-attribute endpoint, do not wrap the body inside `"language"`.
 
+Curl command:
+
+```bash
+curl -X PATCH "http://localhost:8000/ngsi-ld/v1/entities/urn:ngsi-ld:GtfsAgency:Malaga_EMT/attrs/language?broker=localhost&port=1889&qos=1&hlink=%2B" \
+  -H "Content-Type: application/json" \
+  -d '{"type": "Property", "value": "FR"}'
+```
+
 ## Delete One Attribute
 
 Endpoint:
@@ -529,6 +590,12 @@ Expected response:
 }
 ```
 
+Curl command:
+
+```bash
+curl -X DELETE "http://localhost:8000/ngsi-ld/v1/entities/urn:ngsi-ld:GtfsAgency:Malaga_EMT/attrs/page?broker=localhost&port=1889&hlink=%2B"
+```
+
 ## Delete An Entity
 
 Endpoint:
@@ -554,6 +621,12 @@ Expected response:
   "status": "deleted",
   "id": "urn:ngsi-ld:GtfsAgency:Malaga_EMT"
 }
+```
+
+Curl command:
+
+```bash
+curl -X DELETE "http://localhost:8000/ngsi-ld/v1/entities/urn:ngsi-ld:GtfsAgency:Malaga_EMT?broker=localhost&port=1889&hlink=%2B&my_area=unknown_area"
 ```
 
 ## Batch Create
@@ -622,6 +695,29 @@ Expected response:
 }
 ```
 
+Curl command:
+
+```bash
+curl -X POST "http://localhost:8000/ngsi-ld/v1/entityOperations/create?broker=localhost&port=1889&qos=1&my_area=unknown_area&my_loc=unknown_location" \
+  -H "Content-Type: application/json" \
+  -d '[
+  {
+    "id": "urn:ngsi-ld:GtfsAgency:Batch_Agency_1",
+    "type": "GtfsAgency",
+    "agencyName": {"type": "Property", "value": "Batch Agency One"},
+    "language": {"type": "Property", "value": "EN"},
+    "@context": ["https://smartdatamodels.org/context.jsonld", "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld"]
+  },
+  {
+    "id": "urn:ngsi-ld:GtfsAgency:Batch_Agency_2",
+    "type": "GtfsAgency",
+    "agencyName": {"type": "Property", "value": "Batch Agency Two"},
+    "language": {"type": "Property", "value": "FR"},
+    "@context": ["https://smartdatamodels.org/context.jsonld", "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld"]
+  }
+]'
+```
+
 ## Batch Update
 
 Endpoint:
@@ -670,6 +766,27 @@ Expected response:
 }
 ```
 
+Curl command:
+
+```bash
+curl -X POST "http://localhost:8000/ngsi-ld/v1/entityOperations/update?broker=localhost&port=1889&qos=1" \
+  -H "Content-Type: application/json" \
+  -d '[
+  {
+    "id": "urn:ngsi-ld:GtfsAgency:Batch_Agency_1",
+    "type": "GtfsAgency",
+    "language": {"type": "Property", "value": "ES"},
+    "@context": ["https://smartdatamodels.org/context.jsonld", "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld"]
+  },
+  {
+    "id": "urn:ngsi-ld:GtfsAgency:Batch_Agency_2",
+    "type": "GtfsAgency",
+    "language": {"type": "Property", "value": "IT"},
+    "@context": ["https://smartdatamodels.org/context.jsonld", "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld"]
+  }
+]'
+```
+
 ## Batch Upsert
 
 Endpoint:
@@ -693,6 +810,29 @@ Expected response:
   "status": "upserted",
   "count": 2
 }
+```
+
+Curl command (same array format as batch create/update):
+
+```bash
+curl -X POST "http://localhost:8000/ngsi-ld/v1/entityOperations/upsert?broker=localhost&port=1889&qos=1&my_area=unknown_area&my_loc=unknown_location" \
+  -H "Content-Type: application/json" \
+  -d '[
+  {
+    "id": "urn:ngsi-ld:GtfsAgency:Batch_Agency_1",
+    "type": "GtfsAgency",
+    "agencyName": {"type": "Property", "value": "Batch Agency One"},
+    "language": {"type": "Property", "value": "EN"},
+    "@context": ["https://smartdatamodels.org/context.jsonld", "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld"]
+  },
+  {
+    "id": "urn:ngsi-ld:GtfsAgency:Batch_Agency_2",
+    "type": "GtfsAgency",
+    "agencyName": {"type": "Property", "value": "Batch Agency Two"},
+    "language": {"type": "Property", "value": "FR"},
+    "@context": ["https://smartdatamodels.org/context.jsonld", "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld"]
+  }
+]'
 ```
 
 ## Batch Delete
@@ -728,6 +868,14 @@ Expected response:
   "status": "deleted",
   "count": 2
 }
+```
+
+Curl command:
+
+```bash
+curl -X POST "http://localhost:8000/ngsi-ld/v1/entityOperations/delete?broker=localhost&port=1889&hlink=%2B&my_area=unknown_area" \
+  -H "Content-Type: application/json" \
+  -d '["urn:ngsi-ld:GtfsAgency:Batch_Agency_1", "urn:ngsi-ld:GtfsAgency:Batch_Agency_2"]'
 ```
 
 ## Create A Subscription By Type
@@ -774,6 +922,22 @@ Expected response:
 }
 ```
 
+Curl command:
+
+```bash
+curl -X POST "http://localhost:8000/ngsi-ld/v1/subscriptions?broker=localhost&port=1890&qos=1&my_area=unknown_area" \
+  -H "Content-Type: application/json" \
+  -d '{
+  "id": "urn:subscription:broker2-gtfs",
+  "type": "Subscription",
+  "entities": [{"type": "GtfsAgency"}],
+  "@context": [
+    "https://smartdatamodels.org/context.jsonld",
+    "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld"
+  ]
+}'
+```
+
 ## Create A Subscription By Entity ID
 
 Body:
@@ -795,6 +959,22 @@ Body:
 ```
 
 This receives notifications only for the matching entity id.
+
+Curl command:
+
+```bash
+curl -X POST "http://localhost:8000/ngsi-ld/v1/subscriptions?broker=localhost&port=1890&qos=1&my_area=unknown_area" \
+  -H "Content-Type: application/json" \
+  -d '{
+  "id": "urn:subscription:by-id-test",
+  "type": "Subscription",
+  "entities": [{"id": "urn:ngsi-ld:GtfsAgency:Malaga_EMT"}],
+  "@context": [
+    "https://smartdatamodels.org/context.jsonld",
+    "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld"
+  ]
+}'
+```
 
 ## Create A Subscription With Watched Attributes
 
@@ -822,6 +1002,23 @@ Body:
 
 Only changes to `agencyName` and `language` will be sent as notifications.
 
+Curl command:
+
+```bash
+curl -X POST "http://localhost:8000/ngsi-ld/v1/subscriptions?broker=localhost&port=1890&qos=1&my_area=unknown_area" \
+  -H "Content-Type: application/json" \
+  -d '{
+  "id": "urn:subscription:watched-attrs",
+  "type": "Subscription",
+  "entities": [{"type": "GtfsAgency"}],
+  "watchedAttributes": ["agencyName", "language"],
+  "@context": [
+    "https://smartdatamodels.org/context.jsonld",
+    "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld"
+  ]
+}'
+```
+
 ## List Subscriptions
 
 Endpoint:
@@ -847,6 +1044,12 @@ Example response:
 ]
 ```
 
+Curl command:
+
+```bash
+curl "http://localhost:8000/ngsi-ld/v1/subscriptions"
+```
+
 ## Get One Subscription
 
 Endpoint:
@@ -859,6 +1062,12 @@ Example:
 
 ```text
 subscriptionId = urn:subscription:broker2-gtfs
+```
+
+Curl command:
+
+```bash
+curl "http://localhost:8000/ngsi-ld/v1/subscriptions/urn:subscription:broker2-gtfs"
 ```
 
 ## Stop A Subscription
@@ -895,9 +1104,28 @@ Connected WebSocket clients receive:
 
 and the WebSocket closes cleanly.
 
+Curl command:
+
+```bash
+curl -X DELETE "http://localhost:8000/ngsi-ld/v1/subscriptions/urn:subscription:broker2-gtfs"
+```
+
 ## WebSocket: Listen To Existing Subscription
 
-Swagger UI does not provide a good WebSocket listener. Use a small script.
+Swagger UI does not provide a good WebSocket listener. Use a small script or `websocat` from the command line.
+
+Install `websocat` on the VM (Linux):
+
+```bash
+wget -qO /usr/local/bin/websocat https://github.com/vi/websocat/releases/latest/download/websocat.x86_64-unknown-linux-musl
+chmod +x /usr/local/bin/websocat
+```
+
+Curl-style command with `websocat`:
+
+```bash
+websocat "ws://localhost:8000/ngsi-ld/v1/subscriptions/urn:subscription:broker2-gtfs/ws"
+```
 
 Create `websocketlistener.py`:
 
@@ -962,6 +1190,20 @@ Flow:
 3. Receive {"status":"subscribed","id":"..."}.
 4. Receive initial/live entity notifications.
 5. Disconnect to automatically stop the subscription.
+```
+
+Curl-style command with `websocat` (pipe the subscription JSON then keep listening):
+
+```bash
+echo '{
+  "id": "urn:subscription:stream-test",
+  "type": "Subscription",
+  "entities": [{"type": "GtfsAgency"}],
+  "@context": [
+    "https://smartdatamodels.org/context.jsonld",
+    "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld"
+  ]
+}' | websocat --no-close "ws://localhost:8000/ngsi-ld/v1/subscriptions/ws"
 ```
 
 ## Local Cross-Broker Test
