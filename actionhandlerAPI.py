@@ -22,12 +22,15 @@ from actionhandler import (
     delete_entity,
     delete_entity_attr,
     get_entities,
+    mark_subscription_connected,
+    mark_subscription_disconnected,
     patch_entity,
     patch_entity_attr,
     post_entity,
     post_entity_upsert,
     post_subscription,
     list_subscription_providers,
+    start_subscription_reaper,
     stop_all_subscriptions,
     stop_subscription_provider,
     stop_subscription,
@@ -36,6 +39,7 @@ from actionhandler import (
 # Per-subscription notification queues (populated by POST /subscriptions)
 notification_queues: dict = {}
 QUEUE_WAIT_SECONDS = 0.005
+WS_HEARTBEAT_IDLE_SECONDS = 30.0
 WS_CLOSED_EXCEPTIONS = (WebSocketDisconnect, ConnectionClosed)
 
 app = FastAPI(
@@ -43,6 +47,11 @@ app = FastAPI(
     description="NGSI-LD compliant API over MQTT using ComDeX",
     version="0.6.1",
 )
+
+
+@app.on_event("startup")
+def startup_runtime_resources():
+    start_subscription_reaper()
 
 
 @app.on_event("shutdown")
@@ -453,39 +462,74 @@ async def subscription_notifications_ws(websocket: WebSocket, subscriptionId: st
         return
 
     await websocket.accept()
-    await websocket.send_json({"status": "connected", "id": subscriptionId})
-
-    info = active_subscriptions[subscriptionId]
-    entity_type = info.get("type")
-    entity_id = info.get("entity_id")
-    watched_attributes = info.get("watched_attributes")
-    snapshot = get_entities(
-        broker=info["broker"],
-        port=info["port"],
-        hlink="+",
-        entity_type=[entity_type] if entity_type and entity_type != "+" else None,
-        entity_id=entity_id or None,
-        attrs=watched_attributes,
-        limit=1800,
-        fast=True,
-    )
-    for entity in snapshot:
-        await websocket.send_json(entity)
-
+    mark_subscription_connected(subscriptionId)
     loop = asyncio.get_event_loop()
     try:
-        while subscriptionId in active_subscriptions:
-            try:
-                await send_next_notifications(websocket, notification_q, loop, subscriptionId)
-            except queue.Empty:
-                continue
+        await websocket.send_json({"status": "connected", "id": subscriptionId})
+
+        info = active_subscriptions[subscriptionId]
+        entity_type = info.get("type")
+        entity_id = info.get("entity_id")
+        watched_attributes = info.get("watched_attributes")
         try:
-            await websocket.send_json({"status": "stopped", "id": subscriptionId})
-            await websocket.close(code=1000)
+            # get_entities() is a blocking, synchronous call (paho-mqtt
+            # under the hood). Running it directly on the event loop would
+            # freeze every other connection's WS handshake/traffic for as
+            # long as it takes to complete - under real broker load this is
+            # exactly what caused unrelated clients to see "timed out during
+            # opening handshake". Run it in a thread instead.
+            snapshot = await loop.run_in_executor(
+                None,
+                lambda: get_entities(
+                    broker=info["broker"],
+                    port=info["port"],
+                    hlink="+",
+                    entity_type=[entity_type] if entity_type and entity_type != "+" else None,
+                    entity_id=entity_id or None,
+                    attrs=watched_attributes,
+                    limit=1800,
+                    fast=True,
+                ),
+            )
+        except Exception:
+            # A snapshot failure (e.g. a transient broker hiccup) shouldn't
+            # drop a client that's otherwise fine - it just misses the
+            # initial snapshot and picks up from the next live notification.
+            snapshot = []
+        for entity in snapshot:
+            await websocket.send_json(entity)
+
+        last_activity = time.monotonic()
+        try:
+            while subscriptionId in active_subscriptions:
+                try:
+                    await send_next_notifications(websocket, notification_q, loop, subscriptionId)
+                    last_activity = time.monotonic()
+                except queue.Empty:
+                    # Nothing to send doesn't mean the client is still there:
+                    # while the queue is empty this loop never touches the
+                    # socket, so a client that vanished during a quiet period
+                    # would otherwise go undetected forever. Probe it
+                    # periodically so a dead connection still surfaces
+                    # WS_CLOSED_EXCEPTIONS below instead of leaving the
+                    # subscription looking "connected" indefinitely.
+                    if time.monotonic() - last_activity >= WS_HEARTBEAT_IDLE_SECONDS:
+                        await websocket.send_json({"status": "ping", "id": subscriptionId})
+                        last_activity = time.monotonic()
+                    continue
+            try:
+                await websocket.send_json({"status": "stopped", "id": subscriptionId})
+                await websocket.close(code=1000)
+            except WS_CLOSED_EXCEPTIONS:
+                pass
         except WS_CLOSED_EXCEPTIONS:
-            pass
-    except WS_CLOSED_EXCEPTIONS:
-        pass  # subscription keeps running — client can reconnect
+            pass  # subscription keeps running — client can reconnect
+    finally:
+        # Client is gone (dropped or explicitly disconnected). The
+        # subscription itself is intentionally left running so it can
+        # reconnect - mark it idle so the reaper can reclaim it if no one
+        # ever does.
+        mark_subscription_disconnected(subscriptionId)
 
 
 # ---------------------------------------------------------------------------

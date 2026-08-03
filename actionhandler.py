@@ -80,6 +80,68 @@ def _stop_process(process):
         process.join(timeout=2)
 
 
+# ---------------------------------------------------------------------------
+# Abandoned-subscription reaper
+#
+# subscription_notifications_ws() intentionally keeps a subscription (and its
+# advertisement-discovery thread + provider processes) running across a
+# client disconnect, so a client can reconnect and keep receiving on the same
+# subscription id. The only thing that ever reclaims those resources is an
+# explicit DELETE /subscriptions/{id}. If the owning client never sends one
+# (it crashed, or the DELETE itself failed because the gateway was already
+# under fd pressure) the subscription is orphaned forever. This reaper is the
+# safety net: it stops any subscription that has had no connected WebSocket
+# client for SUBSCRIPTION_IDLE_GRACE_SECONDS. A subscription whose client
+# keeps the WebSocket open never qualifies, no matter how long it runs.
+# ---------------------------------------------------------------------------
+
+SUBSCRIPTION_IDLE_GRACE_SECONDS = 120
+_REAPER_POLL_SECONDS = 30
+_reaper_started = False
+_reaper_lock = threading.Lock()
+
+
+def mark_subscription_connected(subscription_id):
+    subscription = active_subscriptions.get(subscription_id)
+    if subscription is not None:
+        subscription["ws_connected"] = True
+        subscription["disconnected_at"] = None
+
+
+def mark_subscription_disconnected(subscription_id):
+    subscription = active_subscriptions.get(subscription_id)
+    if subscription is not None:
+        subscription["ws_connected"] = False
+        subscription["disconnected_at"] = time.monotonic()
+
+
+def _reap_abandoned_subscriptions():
+    while True:
+        time.sleep(_REAPER_POLL_SECONDS)
+        now = time.monotonic()
+        for subscription_id, subscription in list(active_subscriptions.items()):
+            if subscription.get("ws_connected"):
+                continue
+            disconnected_at = subscription.get("disconnected_at")
+            if disconnected_at is None:
+                continue
+            if now - disconnected_at >= SUBSCRIPTION_IDLE_GRACE_SECONDS:
+                print(
+                    f"Reaping abandoned subscription {subscription_id} "
+                    f"(no connected client for {now - disconnected_at:.0f}s)"
+                )
+                stop_subscription(subscription_id)
+
+
+def start_subscription_reaper():
+    global _reaper_started
+    with _reaper_lock:
+        if _reaper_started:
+            return
+        _reaper_started = True
+        threading.Thread(target=_reap_abandoned_subscriptions, daemon=True).start()
+
+
 def _provider_matches(provider, broker=None, port=None, area=None, context=None, entity_type=None):
     if broker is not None and provider.get("broker") != broker:
         return False
@@ -211,6 +273,22 @@ def _provider_topic(broker, port, my_area, context, entity_type, entity_id):
     return 'provider/' + broker + '/' + str(port) + '/' + my_area + '/' + context + '/' + entity_type
 
 
+def _serialize_payload(value):
+    return json.dumps(value, ensure_ascii=False, default=str)
+
+
+def _parse_payload(payload):
+    if isinstance(payload, bytes):
+        text = payload.decode(encoding='UTF-8', errors='strict')
+    else:
+        text = str(payload)
+
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return ast.literal_eval(text)
+
+
 def _publish_entity_attributes(client, data, my_area, context, entity_type, entity_id, qos):
     curr_time = str(datetime.datetime.now())
     time_rels = {"createdAt": [curr_time], "modifiedAt": [curr_time]}
@@ -219,13 +297,13 @@ def _publish_entity_attributes(client, data, my_area, context, entity_type, enti
             continue
 
         small_topic = my_area + '/entities/' + context + '/' + entity_type + '/LNA/' + entity_id + '/' + key
-        client.publish(small_topic, str(value), retain=True, qos=qos)
+        client.publish(small_topic, _serialize_payload(value), retain=True, qos=qos)
 
         small_topic = my_area + '/entities/' + context + '/' + entity_type + '/LNA/' + entity_id + '/' + key + "_timerelsystem_CreatedAt"
-        client.publish(small_topic, str(time_rels["createdAt"]), retain=True, qos=qos)
+        client.publish(small_topic, _serialize_payload(time_rels["createdAt"]), retain=True, qos=qos)
 
         small_topic = my_area + '/entities/' + context + '/' + entity_type + '/LNA/' + entity_id + '/' + key + "_timerelsystem_modifiedAt"
-        client.publish(small_topic, str(time_rels["modifiedAt"]), retain=True, qos=qos)
+        client.publish(small_topic, _serialize_payload(time_rels["modifiedAt"]), retain=True, qos=qos)
     return time_rels
 
 
@@ -324,17 +402,17 @@ def post_entity(data,my_area,broker,port,qos,my_loc,bypass_existence_check=0,cli
             #print(small_topic)
             print("Publishing message to subtopic")    
             
-            client.publish(small_topic,str(key[1]),retain=True,qos=qos)
+            client.publish(small_topic,_serialize_payload(key[1]),retain=True,qos=qos)
             
             curr_time=str(datetime.datetime.now())
             time_rels = { "createdAt": [curr_time],"modifiedAt": [curr_time] }
 
             small_topic=my_area+'/entities/'+context+'/'+typee+'/LNA/'+id+'/'+ key[0]+"_timerelsystem_CreatedAt"
                 
-            client.publish(small_topic,str(time_rels["createdAt"]),retain=True,qos=qos)
+            client.publish(small_topic,_serialize_payload(time_rels["createdAt"]),retain=True,qos=qos)
             
             small_topic=my_area+'/entities/'+context+'/'+typee+'/LNA/'+id+'/'+ key[0]+"_timerelsystem_modifiedAt"
-            client.publish(small_topic,str(time_rels["modifiedAt"]),retain=True,qos=qos)     
+            client.publish(small_topic,_serialize_payload(time_rels["modifiedAt"]),retain=True,qos=qos)     
 
     ############################################################################
     check_topic2="provider/+/+/"+my_area+'/'+context+'/'+typee+'/'
@@ -536,10 +614,7 @@ def recreate_single_entity(messagez, query='', topics='', timee='', georel='', g
 
     if query == '':
         for msg in messagez:
-            attr_str = msg.payload
-            attr_str = attr_str.decode(encoding='UTF-8', errors='strict')
-            attr_str = attr_str.replace("\'", "\"")
-            data2 = json.loads(attr_str)
+            data2 = _parse_payload(msg.payload)
             topic = (msg.topic).split('/')
 
             # Check geospatial condition if specified
@@ -650,10 +725,7 @@ def recreate_single_entity(messagez, query='', topics='', timee='', georel='', g
         queries_big = re.split(('[;|()]'), query)
 
         for msg in messagez:
-            attr_str = msg.payload
-            attr_str = attr_str.decode(encoding='UTF-8', errors='strict')
-            attr_str = attr_str.replace("\'", "\"")
-            data2 = json.loads(attr_str)
+            data2 = _parse_payload(msg.payload)
             topic = (msg.topic).split('/')
 
             # Check geospatial condition if specified
@@ -1325,7 +1397,9 @@ def post_subscription(data, broker, port, qos, my_area="unknown_area", notificat
         "child_processes": child_processes,
         "provider_children": provider_children,
         "disabled_provider_keys": disabled_provider_keys,
-        "provider_lock": provider_lock
+        "provider_lock": provider_lock,
+        "ws_connected": False,
+        "disconnected_at": time.monotonic(),
     }
     print(f"Subscription {sub_id} registered.")
     return sub_id
@@ -1377,10 +1451,10 @@ def patch_entity(entity_id, data, broker, port, hlink='+', qos=0, my_area="unkno
         for key in data.items():
             if key[0] not in ("type", "id", "@context"):
                 small_topic = my_area + '/entities/' + hlink + '/' + tp + '/LNA/' + entity_id + '/' + key[0]
-                client.publish(small_topic, str(key[1]), retain=True, qos=qos)
+                client.publish(small_topic, _serialize_payload(key[1]), retain=True, qos=qos)
                 curr_time = str(datetime.datetime.now())
                 small_topic = my_area + '/entities/' + hlink + '/' + tp + '/LNA/' + entity_id + '/' + key[0] + "_timerelsystem_modifiedAt"
-                client.publish(small_topic, str([curr_time]), retain=True, qos=qos)
+                client.publish(small_topic, _serialize_payload([curr_time]), retain=True, qos=qos)
 
 
 def patch_entity_attr(entity_id, attr_name, data, broker, port, hlink='+', qos=0, my_area="unknown_area",
@@ -1404,10 +1478,10 @@ def patch_entity_attr(entity_id, attr_name, data, broker, port, hlink='+', qos=0
     client, publish_lock = publisher_pool.get(broker, port)
     with publish_lock:
         small_topic = my_area + '/entities/' + hlink + '/' + tp + '/' + loc + '/' + entity_id + '/' + attr_name
-        client.publish(small_topic, str(data), retain=True, qos=qos)
+        client.publish(small_topic, _serialize_payload(data), retain=True, qos=qos)
         curr_time = str(datetime.datetime.now())
         small_topic = my_area + '/entities/' + hlink + '/' + tp + '/LNA/' + entity_id + '/' + attr_name + "_timerelsystem_modifiedAt"
-        client.publish(small_topic, str([curr_time]), retain=True, qos=qos)
+        client.publish(small_topic, _serialize_payload([curr_time]), retain=True, qos=qos)
 
 
 def get_entities(broker, port, hlink='+', entity_type=None, entity_id=None, attrs=None,
@@ -1881,12 +1955,12 @@ def main(argv):
                         small_topic=my_area+'/entities/'+HLink+'/'+tp+'/LNA/'+id+'/'+key[0]
                         #print(small_topic)
                         print("Publishing message to subtopic")
-                        client.publish(small_topic,str(key[1]),retain=True,qos=qos)
+                        client.publish(small_topic,_serialize_payload(key[1]),retain=True,qos=qos)
 
                         curr_time=str(datetime.datetime.now())
                         time_rels = { "createdAt": [curr_time],"modifiedAt": [curr_time] }
                         small_topic=my_area+'/entities/'+HLink+'/'+tp+'/LNA/'+id+'/'+ key[0]+"_timerelsystem_modifiedAt"
-                        client.publish(small_topic,str(time_rels["modifiedAt"]),retain=True,qos=qos)
+                        client.publish(small_topic,_serialize_payload(time_rels["modifiedAt"]),retain=True,qos=qos)
                 client.loop_stop()          
 
         #do patch to attribute    
@@ -1926,12 +2000,12 @@ def main(argv):
                 for key in data.items():
                     small_topic=my_area+'/entities/'+HLink+'/'+tp+'/'+loc+'/'+id+'/'+key[0]
                     print("Publishing message to subtopic")
-                    client.publish(small_topic,str(key[1]),retain=True,qos=qos)
+                    client.publish(small_topic,_serialize_payload(key[1]),retain=True,qos=qos)
 
                     curr_time=str(datetime.datetime.now())
                     time_rels = { "createdAt": [curr_time],"modifiedAt": [curr_time] }
                     small_topic=my_area+'/entities/'+HLink+'/'+tp+'/LNA/'+id+'/'+ key[0]+"_timerelsystem_modifiedAt"
-                    client.publish(small_topic,str(time_rels["modifiedAt"]),retain=True,qos=qos)
+                    client.publish(small_topic,_serialize_payload(time_rels["modifiedAt"]),retain=True,qos=qos)
                 client.loop_stop()
 
 

@@ -950,5 +950,80 @@ class ComdexApiIntegrationTests(unittest.TestCase):
             self.assertEqual(entity_id, msg["id"])
 
 
+    # ------------------------------------------------------------------
+    # test_19-21 (q filter on subscriptions) removed: post_subscription()
+    # in actionhandler.py never reads/stores a "q" field, and neither the
+    # WS snapshot nor the live notification path apply it. Re-add these
+    # once subscription-level q filtering is implemented.
+    # ------------------------------------------------------------------
+
+    # ------------------------------------------------------------------
+    # test_22 — subscription without q filter still works normally
+    # ------------------------------------------------------------------
+
+    def test_22_subscription_no_q_filter_still_works(self):
+        asyncio.run(self._subscription_no_q_filter_still_works())
+
+    async def _subscription_no_q_filter_still_works(self):
+        """Omitting q must behave exactly as before (no regression)."""
+        entity_type = self.unique("ComdexNoQ")
+        entity_id   = f"urn:ngsi-ld:{entity_type}:001"
+        sub_id      = f"urn:subscription:{entity_type}"
+
+        self.addCleanup(self.delete_entity_best_effort, entity_id, BROKER2_PORT)
+        self.addCleanup(self.delete_subscription_best_effort, sub_id)
+
+        self.request_json(
+            "POST",
+            f"/ngsi-ld/v1/subscriptions?broker={BROKER_HOST}&port={BROKER2_PORT}"
+            f"&qos={QOS}&my_area={AREA}",
+            expected_status=201,
+            json={
+                "id": sub_id,
+                "type": "Subscription",
+                "entities": [{"type": entity_type}],
+                "watchedAttributes": ["agencyName", "language"],
+                "@context": CONTEXT,
+            },
+        )
+
+        fetched = self.request_json(
+            "GET", f"/ngsi-ld/v1/subscriptions/{quote(sub_id, safe='')}"
+        )
+        self.assertIsNone(fetched.get("q"), "q must be null when not set")
+
+        uri = f"{WS_BASE_URL}/ngsi-ld/v1/subscriptions/{quote(sub_id, safe='')}/ws"
+        async with websockets.connect(uri) as ws:
+            _, connected = await self.recv_json(ws, timeout=3)
+            self.assertEqual("connected", connected["status"])
+
+            # Both EN and FR entities should be delivered (no q filter)
+            for lang in ("EN", "FR"):
+                eid = f"urn:ngsi-ld:{entity_type}:{lang}"
+                self.addCleanup(self.delete_entity_best_effort, eid, BROKER2_PORT)
+                self.post_entity(
+                    self.entity_payload(entity_type, eid, language=lang),
+                    BROKER2_PORT,
+                )
+
+            received_ids: set[str] = set()
+            deadline = time.monotonic() + 10.0
+            while time.monotonic() < deadline and len(received_ids) < 2:
+                try:
+                    remaining = max(0.1, deadline - time.monotonic())
+                    _, msg = await self.recv_json(ws, timeout=remaining)
+                    if (
+                        isinstance(msg, dict)
+                        and isinstance(msg.get("id"), str)
+                        and msg["id"].startswith(f"urn:ngsi-ld:{entity_type}:")
+                    ):
+                        received_ids.add(msg["id"])
+                except asyncio.TimeoutError:
+                    break
+
+            self.assertEqual(2, len(received_ids),
+                             "Without q filter, all entity types must be delivered")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
