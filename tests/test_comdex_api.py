@@ -885,17 +885,20 @@ class ComdexApiIntegrationTests(unittest.TestCase):
             self.post_entity(self.entity_payload(entity_type, entity_id), BROKER2_PORT)
             _, msg = await self.wait_for_entity_message(ws, entity_id, timeout=8)
             self.assertEqual(entity_id, msg["id"])
-        # The async-with block exits here: client sends a close frame.
-        # The server's send loop only discovers the disconnect when it next attempts
-        # a send on the closed socket.  Posting a second entity forces that attempt.
+        # The async-with block exits here: client sends a close frame. The
+        # server actively watches for the disconnect (races it against
+        # notification delivery) instead of only discovering it on the next
+        # attempted send, so it should stop the subscription shortly on its own.
 
-        entity_id2 = f"urn:ngsi-ld:{entity_type}:002"
-        self.addCleanup(self.delete_entity_best_effort, entity_id2, BROKER2_PORT)
-        self.post_entity(self.entity_payload(entity_type, entity_id2), BROKER2_PORT)
-        await asyncio.sleep(1.5)  # wait for server to detect disconnect and stop subscription
+        deadline = time.monotonic() + 8
+        active_ids = set()
+        while time.monotonic() < deadline:
+            subs = self.request_json("GET", "/ngsi-ld/v1/subscriptions")
+            active_ids = {s["id"] for s in subs}
+            if sub_id not in active_ids:
+                break
+            await asyncio.sleep(0.25)
 
-        subs = self.request_json("GET", "/ngsi-ld/v1/subscriptions")
-        active_ids = {s["id"] for s in subs}
         self.assertNotIn(sub_id, active_ids, "One-shot subscription must be removed after WS disconnect")
 
     # ------------------------------------------------------------------

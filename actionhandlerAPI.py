@@ -579,13 +579,52 @@ async def subscription_websocket(websocket: WebSocket):
 
     await websocket.send_json({"status": "subscribed", "id": sub_id})
 
+    async def wait_for_disconnect():
+        # websocket.receive() returns the raw ASGI message rather than
+        # raising, so a disconnect has to be recognized explicitly. Any
+        # other frame is unexpected on this server-push-only protocol and
+        # is just discarded so the wait continues.
+        while True:
+            message = await websocket.receive()
+            if message["type"] == "websocket.disconnect":
+                return
+
+    async def get_next_notification():
+        try:
+            return await loop.run_in_executor(
+                None, lambda: notification_q.get(timeout=QUEUE_WAIT_SECONDS)
+            )
+        except queue.Empty:
+            return None
+
+    # Actively race disconnect-detection against notification delivery
+    # instead of only discovering a closed socket the next time a send is
+    # attempted - previously that meant a client that vanished during a
+    # quiet period stayed "subscribed" until some unrelated event (like
+    # another client posting a matching entity) forced a send that failed.
+    disconnect_task = asyncio.ensure_future(wait_for_disconnect())
     try:
         while True:
-            try:
-                await send_next_notifications(websocket, notification_q, loop, sub_id)
-            except queue.Empty:
-                continue
+            notify_task = asyncio.ensure_future(get_next_notification())
+            done, _ = await asyncio.wait(
+                {disconnect_task, notify_task}, return_when=asyncio.FIRST_COMPLETED
+            )
+
+            if notify_task in done:
+                item = notify_task.result()
+                if item is not None:
+                    entity = notification_payload_for_subscription(sub_id, item)
+                    if entity is not None:
+                        await websocket.send_json(entity)
+            else:
+                notify_task.cancel()
+
+            if disconnect_task in done:
+                break
     except WS_CLOSED_EXCEPTIONS:
+        pass
+    finally:
+        disconnect_task.cancel()
         # stop_subscription() joins the advertisement thread (up to 5s) and
         # any provider child processes (up to ~4s each). Calling it inline
         # here would block the event loop for that whole time, stalling
