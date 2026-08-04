@@ -1509,7 +1509,7 @@ def patch_entity_attr(entity_id, attr_name, data, broker, port, hlink='+', qos=0
 
 def get_entities(broker, port, hlink='+', entity_type=None, entity_id=None, attrs=None,
                  q=None, georel=None, geometry=None, coordinates=None,
-                 geoproperty='location', area=None, limit=1800, timee=None, fast=False):
+                 geoproperty='location', area=None, limit=1800, timee=None):
     if hlink != '+':
         hlink = hlink.replace("/", "§")
     area = area or ['+']
@@ -1535,14 +1535,14 @@ def get_entities(broker, port, hlink='+', entity_type=None, entity_id=None, attr
                 t = "+" if typee == "#" else typee
                 check_top.append("provider/+/+/" + z + '/' + hlink + '/' + t + '/' + id)
 
-        if fast:
-            messages_for_context = GET(
-                broker, port, check_top, 0.1, 1,
-                idle_timeout=0.03,
-                max_wait=0.5,
-            )
-        else:
-            messages_for_context = GET(broker, port, check_top, 0.1, 1)
+        # Provider discovery is low-cardinality (a handful of providers per
+        # type), so this can stay snappy - but it's still bounded, never
+        # unconditionally unbounded like the pre-fix behavior.
+        messages_for_context = GET(
+            broker, port, check_top, 0.1, 1,
+            idle_timeout=0.5,
+            max_wait=3.0,
+        )
         if typee == "#":
             typee = "+"
         context_providers_full = []
@@ -1562,14 +1562,20 @@ def get_entities(broker, port, hlink='+', entity_type=None, entity_id=None, attr
                     topic.append(initial_topic[3] + '/entities/' + hlink + '/' + typee + '/#')
                 else:
                     topic.append(initial_topic[3] + '/entities/' + hlink + '/' + typee + '/+/' + id + '/#')
-            if fast:
-                messages = GET(
-                    initial_topic[1], int(initial_topic[2]), topic, 0.5, 1, limit,
-                    idle_timeout=0.03,
-                    max_wait=0.75,
-                )
-            else:
-                messages = GET(initial_topic[1], int(initial_topic[2]), topic, 0.5, 1, limit)
+            # Entity data can be heavily fragmented (one MQTT message per
+            # attribute) with real gaps of several seconds between
+            # fragments under load - measured live on production SM2
+            # traffic: median/p95 gap ~0ms, but a genuine ~5.2s pause
+            # occurred at least once in a single 30s sample. idle_timeout
+            # gives real margin above that; max_wait is the hard ceiling
+            # so this can never hang indefinitely like the old unbounded
+            # path did (confirmed live: it hung 60s+ with zero response
+            # under real SM2 volume).
+            messages = GET(
+                initial_topic[1], int(initial_topic[2]), topic, 0.5, 1, limit,
+                idle_timeout=10.0,
+                max_wait=30.0,
+            )
             if messages:
                 context_for_reconstruction = '' if hlink == '+' else hlink
                 results = recreate_multiple_entities(messages, q, attrs, timee=timee, limit=limit,

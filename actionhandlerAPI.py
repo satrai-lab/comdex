@@ -488,7 +488,6 @@ async def subscription_notifications_ws(websocket: WebSocket, subscriptionId: st
                     entity_id=entity_id or None,
                     attrs=watched_attributes,
                     limit=1800,
-                    fast=True,
                 ),
             )
         except Exception:
