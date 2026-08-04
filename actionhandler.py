@@ -487,9 +487,10 @@ def check_existence(broker,port,topic):
     except:
         pass
     #time.sleep(1)
-    client3.loop_stop()  
+    client3.loop_stop()
+    client3.disconnect()
     #print(exists)
-    return exists    
+    return exists
 
 
 # Function: GET
@@ -558,6 +559,7 @@ def GET(broker, port, topics, expires, qos, limit=2000, idle_timeout=None, max_w
         pass
 
     client.loop_stop()
+    client.disconnect()
 
     # Return the received messages (entities)
     return messagez
@@ -1268,6 +1270,8 @@ def clear_retained(broker, port, retained):
 
     client.loop_stop()
     client2.loop_stop()
+    client.disconnect()
+    client2.disconnect()
 
 
 #debug functions to see mqtt broker communication
@@ -1348,6 +1352,7 @@ def post_subscription(data, broker, port, qos, my_area="unknown_area", notificat
     client1.loop_start()
     client1.publish(big_topic, str(data), qos=qos)
     client1.loop_stop()
+    client1.disconnect()
 
     area = data.get('area', ['+'])
     truetype2 = truetype if truetype != '' else '#'
@@ -1596,6 +1601,7 @@ def batch_create(entities, broker, port, qos=0, my_area="unknown_area", my_loc="
                 advertisement_exists.setdefault(typee, [])
         else:
             post_entity(data, my_area, broker, port, qos, my_loc, 0, client)
+    client.disconnect()
 
 
 def batch_update(entities, broker, port, qos=0, my_area="unknown_area", my_loc="unknown_location"):
@@ -1603,6 +1609,7 @@ def batch_update(entities, broker, port, qos=0, my_area="unknown_area", my_loc="
     client.connect(broker, port)
     for data in entities:
         post_entity(data, my_area, broker, port, qos, my_loc, 1, client)
+    client.disconnect()
 
 
 def batch_upsert(entities, broker, port, qos=0, my_area="unknown_area", my_loc="unknown_location"):
@@ -1610,6 +1617,7 @@ def batch_upsert(entities, broker, port, qos=0, my_area="unknown_area", my_loc="
     client.connect(broker, port)
     for data in entities:
         post_entity(data, my_area, broker, port, qos, my_loc, 1, client)
+    client.disconnect()
 
 
 def usage():
