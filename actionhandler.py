@@ -40,6 +40,22 @@ CONTEXT_SEPARATOR = "§"
 
     
 
+def _wait_until_connected(client, timeout=5.0):
+    # publish() only queues a packet; the loop_start() thread has to
+    # actually get scheduled to write it to the socket, and client.publish()
+    # does not wait for that. is_connected() only flips True once that
+    # thread has run at least once (it processed the broker's CONNACK) - so
+    # waiting for it confirms the thread is alive and pumping this client's
+    # socket, not just newly spawned. Without this, a caller that publishes
+    # immediately after creating a fresh client and returns success (e.g. a
+    # POST handler) can race a fresh thread that hasn't been scheduled yet
+    # under CPU contention, so a query right after can find nothing even
+    # though the publish "succeeded".
+    deadline = time.monotonic() + timeout
+    while not client.is_connected() and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+
 class PublisherClientPool:
     def __init__(self):
         self._clients = {}
@@ -54,6 +70,7 @@ class PublisherClientPool:
                 client = mqtt.Client(clean_session=True)
                 client.connect(broker, int(port))
                 client.loop_start()
+                _wait_until_connected(client)
                 self._clients[key] = client
                 self._locks[key] = threading.Lock()
             return client, self._locks[key]
@@ -352,6 +369,7 @@ def post_entity(data,my_area,broker,port,qos,my_loc,bypass_existence_check=0,cli
         connected_here = True
 
     client.loop_start()
+    _wait_until_connected(client)
     if 'type' in data:
         typee=str(data['type'])
     else:

@@ -561,9 +561,17 @@ async def subscription_websocket(websocket: WebSocket):
     qos    = raw.get("qos",    0)
 
     notification_q = multiprocessing.Queue()
+    loop = asyncio.get_event_loop()
 
     try:
-        sub_id = post_subscription(raw, broker, port, qos, notification_queue=notification_q)
+        # post_subscription() does blocking MQTT connect/publish. Running it
+        # directly on the event loop would freeze every other connection on
+        # this server for however long that takes - same class of issue as
+        # the get_entities() snapshot call below.
+        sub_id = await loop.run_in_executor(
+            None,
+            lambda: post_subscription(raw, broker, port, qos, notification_queue=notification_q),
+        )
     except ValueError as e:
         await websocket.send_json({"error": str(e)})
         await websocket.close(code=1008)
@@ -571,7 +579,6 @@ async def subscription_websocket(websocket: WebSocket):
 
     await websocket.send_json({"status": "subscribed", "id": sub_id})
 
-    loop = asyncio.get_event_loop()
     try:
         while True:
             try:
@@ -579,7 +586,12 @@ async def subscription_websocket(websocket: WebSocket):
             except queue.Empty:
                 continue
     except WS_CLOSED_EXCEPTIONS:
-        stop_subscription(sub_id)
+        # stop_subscription() joins the advertisement thread (up to 5s) and
+        # any provider child processes (up to ~4s each). Calling it inline
+        # here would block the event loop for that whole time, stalling
+        # every other in-flight request on this server - including a plain
+        # POST /entities from an unrelated client. Run it in a thread.
+        await loop.run_in_executor(None, lambda: stop_subscription(sub_id))
 
 
 # ---------------------------------------------------------------------------
