@@ -4,6 +4,7 @@
 # For more information and updates, visit: [https://github.com/SAMSGBLab/ComDeX]
 
 from pickle import TRUE
+import os
 import sys
 import json
 import getopt
@@ -12,6 +13,7 @@ import time
 import socket
 import logging
 import urllib.parse
+import urllib.error
 import threading
 import multiprocessing
 import pprint
@@ -29,7 +31,7 @@ default_broker_port=1026
 default_ngsild_context="https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld"
 
 #global advertisement flag (to avoid for now passing it in every function)
-singleidadvertisement=False
+singleidadvertisement = os.getenv("COMDEX_SINGLE_ID_ADVERTISEMENT", "false").strip().lower() in ("1", "true", "yes")
 
 #TO DO convert these globals to nonlocals
 #exists=False
@@ -86,6 +88,172 @@ class PublisherClientPool:
 
 publisher_pool = PublisherClientPool()
 
+# ---------------------------------------------------------------------------
+# Deletion engine
+#
+# The old delete_entity()/batch_delete() opened a fresh MQTT connection for
+# every existence check and every retained-topic clear, and for a batch, did
+# this once PER ENTITY, including a full "does another entity of this type
+# still exist" scan after every single deletion. Measured on this machine:
+# 30 entities through the batch endpoint took ~86.5s (~2.9s/entity), and the
+# cost scales with entity count, not with the number of distinct provider
+# scopes - a 10,000-entity batch would take hours.
+#
+# This engine instead discovers retained topics for many entity IDs in one
+# subscribe pass (one MQTT SUBSCRIBE packet can carry many topic filters),
+# clears them through the existing publisher_pool connection instead of a
+# fresh one, and checks "does this type still have any entity left" once per
+# (area, context, type) scope after all requested deletions in that scope are
+# done - not once per entity.
+# ---------------------------------------------------------------------------
+
+DELETE_DISCOVERY_CHUNK_SIZE = int(os.getenv("COMDEX_DELETE_DISCOVERY_CHUNK_SIZE", "200"))
+DELETE_MAX_INFLIGHT = int(os.getenv("COMDEX_DELETE_MAX_INFLIGHT", "50"))
+DELETE_RATE_LIMIT = float(os.getenv("COMDEX_DELETE_RATE_LIMIT", "0"))
+DELETE_DISCOVERY_IDLE_SECONDS = float(os.getenv("COMDEX_DELETE_DISCOVERY_IDLE_SECONDS", "0.2"))
+DELETE_DISCOVERY_MAX_WAIT_SECONDS = float(os.getenv("COMDEX_DELETE_DISCOVERY_MAX_WAIT_SECONDS", "5.0"))
+
+
+class _DeleteDiscoverySession:
+    """One persistent MQTT subscriber connection reused across every
+    discovery round trip in a single delete_entity()/batch_delete() call.
+    Not shared across calls - each call gets its own instance/connection, so
+    concurrent deletes never race on shared discovery state (no more
+    `global exists_topic`)."""
+
+    def __init__(self, broker, port):
+        self._client = mqtt.Client(clean_session=True)
+        self._results = []
+        self._lock = threading.Lock()
+        self._client.on_message = self._on_message
+        self._client.connect(broker, port)
+        self._client.loop_start()
+        _wait_until_connected(self._client)
+
+    def _on_message(self, client, userdata, msg):
+        if msg.retain:
+            with self._lock:
+                self._results.append(msg.topic)
+
+    def collect(self, topics, idle_timeout=DELETE_DISCOVERY_IDLE_SECONDS,
+                max_wait=DELETE_DISCOVERY_MAX_WAIT_SECONDS):
+        """Subscribe to every topic filter in `topics` in one SUBSCRIBE
+        packet, collect whatever retained messages come back, and return
+        once nothing new has arrived for `idle_timeout` seconds (or
+        `max_wait` is hit, whichever first)."""
+        with self._lock:
+            self._results = []
+        if topics:
+            self._client.subscribe([(t, 1) for t in topics])
+        start = time.perf_counter()
+        last_growth = start
+        seen = 0
+        while True:
+            time.sleep(0.01)
+            now = time.perf_counter()
+            with self._lock:
+                count = len(self._results)
+            if count > seen:
+                seen = count
+                last_growth = now
+            if now - last_growth > idle_timeout or now - start > max_wait:
+                break
+        if topics:
+            self._client.unsubscribe(topics)
+        with self._lock:
+            return list(self._results)
+
+    def close(self):
+        self._client.loop_stop()
+        self._client.disconnect()
+
+
+def _bounded_publish(client, lock, topics, rate_limit=DELETE_RATE_LIMIT,
+                      max_inflight=DELETE_MAX_INFLIGHT):
+    """Publish null-retained clears for `topics` through the shared
+    publisher client, in bounded sub-chunks. The lock is released between
+    sub-chunks so a large delete never monopolizes the connection other
+    patch/upsert calls on the same broker/port share, and an optional rate
+    limit caps how fast the broker is asked to process clears."""
+    # qos=1 (not the original code's qos=0) so each clear gets a broker
+    # PUBACK: wait_for_publish() is a no-op for qos=0 (nothing to wait for,
+    # paho marks it "published" the instant it's handed to the socket), so a
+    # caller that clears entity topics and then immediately re-subscribes to
+    # ask "does anything of this type still exist" can race ahead of the
+    # broker actually having applied the clears and see stale retained data.
+    delay = (1.0 / rate_limit) if rate_limit > 0 else 0
+    max_inflight = max(1, max_inflight)
+    for start in range(0, len(topics), max_inflight):
+        chunk = topics[start:start + max_inflight]
+        with lock:
+            infos = [client.publish(topic, None, 1, True) for topic in chunk]
+            for info in infos:
+                info.wait_for_publish(10)
+            if delay:
+                time.sleep(delay)
+        time.sleep(0)
+
+
+def _delete_entities_internal(ids, broker, port, hlink='+', my_area="unknown_area",
+                              chunk_size=DELETE_DISCOVERY_CHUNK_SIZE):
+    """Shared engine behind delete_entity() and batch_delete(). Discovers
+    retained topics for `ids` in chunked subscribe passes, clears them
+    through the pooled publisher connection, and removes each affected
+    provider advertisement scope's advertisement at most once, after every
+    requested deletion in that scope has happened - never per entity."""
+    if hlink != '+':
+        hlink = hlink.replace("/", "§")
+    unique_ids = list(dict.fromkeys(ids))
+    if not unique_ids:
+        return dict(deleted=[], missing=[])
+
+    session = _DeleteDiscoverySession(broker, port)
+    try:
+        found = {}
+        for start in range(0, len(unique_ids), chunk_size):
+            chunk = unique_ids[start:start + chunk_size]
+            chunk_set = set(chunk)
+            topics = [my_area + '/entities/' + hlink + '/+/+/' + eid + '/#' for eid in chunk]
+            for topic in session.collect(topics):
+                parts = topic.split('/')
+                if len(parts) < 6:
+                    continue
+                eid = parts[-2]
+                if eid not in chunk_set:
+                    continue
+                entry = found.setdefault(eid, {'topics': [], 'type': parts[-4], 'hlink': parts[-5]})
+                entry['topics'].append(topic)
+
+        missing = [eid for eid in unique_ids if eid not in found]
+        if not found:
+            return dict(deleted=[], missing=missing)
+
+        clear_topics = []
+        scopes = set()
+        for eid, info in found.items():
+            clear_topics.extend(info['topics'])
+            if singleidadvertisement:
+                clear_topics.append('provider/' + broker + '/' + str(port) + '/' + my_area + '/'
+                                    + info['hlink'] + '/' + info['type'] + '/' + eid)
+            else:
+                scopes.add((info['hlink'], info['type']))
+
+        client, lock = publisher_pool.get(broker, port)
+        _bounded_publish(client, lock, clear_topics)
+
+        if not singleidadvertisement:
+            for hl, tp in scopes:
+                check_topic = my_area + '/entities/' + hl + '/' + tp + '/+/+/#'
+                remaining = session.collect([check_topic])
+                if not remaining:
+                    advert_topic = 'provider/' + broker + '/' + str(port) + '/' + my_area + '/' + hl + '/' + tp
+                    with lock:
+                        client.publish(advert_topic, None, 0, True)
+
+        return dict(deleted=list(found.keys()), missing=missing)
+    finally:
+        session.close()
+
 
 def _stop_process(process):
     if not process.is_alive():
@@ -112,8 +280,8 @@ def _stop_process(process):
 # keeps the WebSocket open never qualifies, no matter how long it runs.
 # ---------------------------------------------------------------------------
 
-SUBSCRIPTION_IDLE_GRACE_SECONDS = 120
-_REAPER_POLL_SECONDS = 30
+SUBSCRIPTION_IDLE_GRACE_SECONDS = int(os.getenv("COMDEX_SUBSCRIPTION_IDLE_GRACE_SECONDS", "120"))
+_REAPER_POLL_SECONDS = int(os.getenv("COMDEX_SUBSCRIPTION_REAPER_POLL_SECONDS", "30"))
 _reaper_started = False
 _reaper_lock = threading.Lock()
 
@@ -192,6 +360,19 @@ def _provider_public_info(provider_key, provider_entry):
     return info
 
 
+# The API layer (actionhandlerAPI.py) owns resources this module doesn't
+# track directly - notably the per-subscription notification queue. Any
+# caller of stop_subscription() (explicit DELETE, the idle reaper, or
+# shutdown) must release those too, so the API layer registers a cleanup
+# callback per subscription id instead of this module reaching into API
+# state or the API having to duplicate reaper-triggered cleanup itself.
+_subscription_cleanup_callbacks = {}
+
+
+def register_subscription_cleanup(subscription_id, callback):
+    _subscription_cleanup_callbacks[subscription_id] = callback
+
+
 def stop_subscription(subscription_id):
     if subscription_id not in active_subscriptions:
         print(f"Subscription {subscription_id} not found")
@@ -204,6 +385,12 @@ def stop_subscription(subscription_id):
     for process in subscription.get("child_processes", []):
         _stop_process(process)
     active_subscriptions.pop(subscription_id, None)
+    callback = _subscription_cleanup_callbacks.pop(subscription_id, None)
+    if callback is not None:
+        try:
+            callback()
+        except Exception as e:
+            print(f"Subscription {subscription_id} cleanup callback failed: {e!r}")
     print(f"Subscription {subscription_id} stopped")
     return True
 
@@ -294,16 +481,76 @@ def _serialize_payload(value):
     return json.dumps(value, ensure_ascii=False, default=str)
 
 
+PAYLOAD_PREVIEW_CHARS = 300
+
+
+class PayloadParseError(ValueError):
+    """Raised by _parse_payload() when a message payload is neither valid
+    JSON nor a valid legacy Python-literal. Callers processing one MQTT
+    message at a time should catch this, log it and skip that message
+    rather than let it propagate out of an on_message callback."""
+
+    def __init__(self, message, preview=None):
+        super().__init__(message)
+        self.preview = preview
+
+
+def _payload_preview(payload, limit=PAYLOAD_PREVIEW_CHARS):
+    """A short, safe-to-log excerpt of a payload - never the full thing,
+    which can be arbitrarily large."""
+    try:
+        text = payload.decode('utf-8', errors='replace') if isinstance(payload, bytes) else str(payload)
+    except Exception:
+        return '<unprintable payload>'
+    if len(text) > limit:
+        return text[:limit] + f'...<{len(text) - limit} more chars>'
+    return text
+
+
+# Lightweight counters distinguishing payload-decoding failures from
+# malformed-NGSI-LD-structure failures during entity reconstruction, so a
+# spike in one or the other is diagnosable without heavier monitoring.
+diagnostics = {'payload_parse_errors': 0, 'reconstruction_errors': 0}
+_diagnostics_lock = threading.Lock()
+
+
+def _bump_diagnostic(name):
+    with _diagnostics_lock:
+        diagnostics[name] = diagnostics.get(name, 0) + 1
+
+
+def _log_message_error(kind, exc, topic=None, broker=None, provider_key=None, preview=None):
+    message = (f"[{kind}] topic={topic!r} broker={broker!r} provider_key={provider_key!r} "
+              f"exception={type(exc).__name__}: {exc} preview={preview!r}")
+    try:
+        print(message)
+    except UnicodeEncodeError:
+        # A malformed payload can contain bytes that decode to characters
+        # the console's own encoding (e.g. Windows cp1252) can't print.
+        # The whole point of this function is to make failures visible
+        # without ever being able to crash the worker itself - so a print
+        # that can't render the message falls back to an ASCII-safe form
+        # instead of raising.
+        print(message.encode('ascii', errors='backslashreplace').decode('ascii'))
+
+
 def _parse_payload(payload):
-    if isinstance(payload, bytes):
-        text = payload.decode(encoding='UTF-8', errors='strict')
-    else:
-        text = str(payload)
+    try:
+        text = payload.decode(encoding='UTF-8', errors='strict') if isinstance(payload, bytes) else str(payload)
+    except UnicodeDecodeError as e:
+        raise PayloadParseError(f'Invalid UTF-8 payload: {e}', preview=_payload_preview(payload)) from e
 
     try:
         return json.loads(text)
     except json.JSONDecodeError:
+        pass
+    try:
         return ast.literal_eval(text)
+    except (ValueError, SyntaxError, TypeError) as e:
+        raise PayloadParseError(
+            f'Payload is neither valid JSON nor a valid Python literal: {e}',
+            preview=_payload_preview(payload),
+        ) from e
 
 
 def _publish_entity_attributes(client, data, my_area, context, entity_type, entity_id, qos):
@@ -625,8 +872,17 @@ def recreate_single_entity(messagez, query='', topics='', timee='', georel='', g
 
     # Check if a specific context is given for comparison
     if context_given == '+':
-        with urllib.request.urlopen(context_text) as url:
-            data_from_web = json.loads(url.read().decode())
+        try:
+            with urllib.request.urlopen(context_text) as url:
+                data_from_web = json.loads(url.read().decode())
+        except (urllib.error.URLError, OSError, ValueError) as exc:
+            # A malformed/unreachable remote @context must not kill the
+            # long-running subscription worker - fall back to no
+            # substitution (the lookups below already no-op on a missing
+            # key) and keep processing this entity.
+            _bump_diagnostic('reconstruction_errors')
+            _log_message_error('context_fetch_error', exc, topic=context_text)
+            data_from_web = {}
         try:
             data['type'] = data_from_web["@context"][typee]
         except:
@@ -634,108 +890,118 @@ def recreate_single_entity(messagez, query='', topics='', timee='', georel='', g
 
     if query == '':
         for msg in messagez:
-            data2 = _parse_payload(msg.payload)
-            topic = (msg.topic).split('/')
+            try:
+                data2 = _parse_payload(msg.payload)
+                topic = (msg.topic).split('/')
 
-            # Check geospatial condition if specified
-            if georel != '':
-                if topic[-1] == geoproperty:
-                    geo_type = str(data2["value"]["type"])
-                    geo_coord = str(data2["value"]["coordinates"])
-                    geo_ok = 0
+                # Check geospatial condition if specified
+                if georel != '':
+                    if topic[-1] == geoproperty:
+                        geo_type = str(data2["value"]["type"])
+                        geo_coord = str(data2["value"]["coordinates"])
+                        geo_ok = 0
 
-                    geo_type = geo_type.replace(" ", "")
-                    geo_coord = geo_coord.replace(" ", "")
-                    coordinates = coordinates.replace(" ", "")
+                        geo_type = geo_type.replace(" ", "")
+                        geo_coord = geo_coord.replace(" ", "")
+                        coordinates = coordinates.replace(" ", "")
 
-                    geo_entity = shape_geo.shape((data2["value"]))
+                        geo_entity = shape_geo.shape((data2["value"]))
 
-                    if geometry == "Point":
-                        query_gjson = shape_geo.Point(json.loads(coordinates))
-                    elif geometry == "LineString":
-                        query_gjson = shape_geo.LineString(json.loads(coordinates))
-                    elif geometry == "Polygon":
-                        query_gjson = shape_geo.Polygon(json.loads(coordinates))
-                    elif geometry == "MultiPoint":
-                        query_gjson = shape_geo.MultiPoint(json.loads(coordinates))
-                    elif geometry == "MultiLineString":
-                        query_gjson = shape_geo.MultiLineString(json.loads(coordinates))
-                    elif geometry == "MultiPolygon":
-                        query_gjson = shape_geo.MultiPolygon(json.loads(coordinates))
+                        if geometry == "Point":
+                            query_gjson = shape_geo.Point(json.loads(coordinates))
+                        elif geometry == "LineString":
+                            query_gjson = shape_geo.LineString(json.loads(coordinates))
+                        elif geometry == "Polygon":
+                            query_gjson = shape_geo.Polygon(json.loads(coordinates))
+                        elif geometry == "MultiPoint":
+                            query_gjson = shape_geo.MultiPoint(json.loads(coordinates))
+                        elif geometry == "MultiLineString":
+                            query_gjson = shape_geo.MultiLineString(json.loads(coordinates))
+                        elif geometry == "MultiPolygon":
+                            query_gjson = shape_geo.MultiPolygon(json.loads(coordinates))
 
-                    # Check specific georelation condition
-                    if georel == "equals":
-                        if geo_entity.equals(query_gjson):
-                            geo_ok = 1
-                        else:
-                            return
-                    elif georel == "within":
-                        if geo_entity.within(query_gjson):
-                            geo_ok = 1
-                        else:
-                            return
-                    elif georel == "intersects":
-                        if geo_entity.intersects(query_gjson):
-                            geo_ok = 1
-                        else:
-                            return
-                    elif re.search("near;", georel):
-                        near_query = georel.split(';')
-                        near_operator = re.findall('[><]|==|>=|<=', near_query[1])
-                        near_geo_queries = (re.split('[><]|==|>=|<=', near_query[1]))
+                        # Check specific georelation condition
+                        if georel == "equals":
+                            if geo_entity.equals(query_gjson):
+                                geo_ok = 1
+                            else:
+                                return
+                        elif georel == "within":
+                            if geo_entity.within(query_gjson):
+                                geo_ok = 1
+                            else:
+                                return
+                        elif georel == "intersects":
+                            if geo_entity.intersects(query_gjson):
+                                geo_ok = 1
+                            else:
+                                return
+                        elif re.search("near;", georel):
+                            near_query = georel.split(';')
+                            near_operator = re.findall('[><]|==|>=|<=', near_query[1])
+                            near_geo_queries = (re.split('[><]|==|>=|<=', near_query[1]))
 
-                        if str(near_geo_queries[0]) == "maxDistance":
-                            if str(near_operator[0]) == "==":
-                                if geo_entity.distance(query_gjson) > float(near_geo_queries[1]):
-                                    return
-                        elif str(near_geo_queries[0]) == "minDistance":
-                            if str(near_operator[0]) == "==":
-                                if geo_entity.distance(query_gjson) < float(near_geo_queries[1]):
-                                    return
-                    elif georel == "contains":
-                        if geo_entity.contains(query_gjson):
-                            geo_ok = 1
-                        else:
-                            return
-                    elif georel == "disjoint":
-                        if geo_entity.disjoint(query_gjson):
-                            geo_ok = 1
-                        else:
-                            return
-                    elif georel == "overlaps":
-                        if geo_entity.overlaps(query_gjson):
-                            geo_ok = 1
-                        else:
-                            return
+                            if str(near_geo_queries[0]) == "maxDistance":
+                                if str(near_operator[0]) == "==":
+                                    if geo_entity.distance(query_gjson) > float(near_geo_queries[1]):
+                                        return
+                            elif str(near_geo_queries[0]) == "minDistance":
+                                if str(near_operator[0]) == "==":
+                                    if geo_entity.distance(query_gjson) < float(near_geo_queries[1]):
+                                        return
+                        elif georel == "contains":
+                            if geo_entity.contains(query_gjson):
+                                geo_ok = 1
+                            else:
+                                return
+                        elif georel == "disjoint":
+                            if geo_entity.disjoint(query_gjson):
+                                geo_ok = 1
+                            else:
+                                return
+                        elif georel == "overlaps":
+                            if geo_entity.overlaps(query_gjson):
+                                geo_ok = 1
+                            else:
+                                return
 
-            # Check topic filters if specified
-            if topics != '' and topics != "#":
-                if topic[-1] in topics:
-                    data[topic[-1]] = data2
-                if topic[-1].endswith("_CreatedAt") or topic[-1].endswith("_modifiedAt"):
-                    if timee != '':
-                        time_topic = (topic[-1].split('_timerelsystem_'))
-                        if context_given == '+':
-                            try:
-                                time_topic[-2] = data_from_web["@context"][time_topic[-2]]
-                            except:
-                                dummy_command = "This is a dummy command for except"
+                # Check topic filters if specified
+                if topics != '' and topics != "#":
+                    if topic[-1] in topics:
+                        data[topic[-1]] = data2
+                    if topic[-1].endswith("_CreatedAt") or topic[-1].endswith("_modifiedAt"):
+                        if timee != '':
+                            time_topic = (topic[-1].split('_timerelsystem_'))
+                            if context_given == '+':
+                                try:
+                                    time_topic[-2] = data_from_web["@context"][time_topic[-2]]
+                                except:
+                                    dummy_command = "This is a dummy command for except"
 
-                        data[time_topic[-2]][time_topic[-1]] = data2
+                            data[time_topic[-2]][time_topic[-1]] = data2
 
-            else:
-                if topic[-1].endswith("_CreatedAt") or topic[-1].endswith("_modifiedAt"):
-                    if timee != '':
-                        time_topic = (topic[-1].split('_timerelsystem_'))
-                        if context_given == '+':
-                            try:
-                                time_topic[-2] = data_from_web["@context"][time_topic[-2]]
-                            except:
-                                dummy_command = "This is a dummy command for except"
-
-                        data[time_topic[-2]][time_topic[-1]] = data2
                 else:
-                    data[topic[-1]] = data2
+                    if topic[-1].endswith("_CreatedAt") or topic[-1].endswith("_modifiedAt"):
+                        if timee != '':
+                            time_topic = (topic[-1].split('_timerelsystem_'))
+                            if context_given == '+':
+                                try:
+                                    time_topic[-2] = data_from_web["@context"][time_topic[-2]]
+                                except:
+                                    dummy_command = "This is a dummy command for except"
+
+                            data[time_topic[-2]][time_topic[-1]] = data2
+                    else:
+                        data[topic[-1]] = data2
+            except PayloadParseError as exc:
+                _bump_diagnostic('payload_parse_errors')
+                _log_message_error('payload_parse_error', exc, topic=getattr(msg, 'topic', None),
+                                   preview=getattr(exc, 'preview', None))
+                continue
+            except (KeyError, TypeError, IndexError, ValueError, json.JSONDecodeError) as exc:
+                _bump_diagnostic('reconstruction_errors')
+                _log_message_error('reconstruction_error', exc, topic=getattr(msg, 'topic', None))
+                continue
 
         data['@context'] = contextt
         return data
@@ -745,139 +1011,149 @@ def recreate_single_entity(messagez, query='', topics='', timee='', georel='', g
         queries_big = re.split(('[;|()]'), query)
 
         for msg in messagez:
-            data2 = _parse_payload(msg.payload)
-            topic = (msg.topic).split('/')
+            try:
+                data2 = _parse_payload(msg.payload)
+                topic = (msg.topic).split('/')
 
-            # Check geospatial condition if specified
-            if georel != '':
-                if topic[-1] == geoproperty:
-                    geo_type = str(data2["value"]["type"])
-                    geo_coord = str(data2["value"]["coordinates"])
-                    geo_ok = 0
+                # Check geospatial condition if specified
+                if georel != '':
+                    if topic[-1] == geoproperty:
+                        geo_type = str(data2["value"]["type"])
+                        geo_coord = str(data2["value"]["coordinates"])
+                        geo_ok = 0
 
-                    geo_type = geo_type.replace(" ", "")
-                    geo_coord = geo_coord.replace(" ", "")
-                    coordinates = coordinates.replace(" ", "")
+                        geo_type = geo_type.replace(" ", "")
+                        geo_coord = geo_coord.replace(" ", "")
+                        coordinates = coordinates.replace(" ", "")
 
-                    geo_entity = shape_geo.shape((data2["value"]))
+                        geo_entity = shape_geo.shape((data2["value"]))
 
-                    if geometry == "Point":
-                        query_gjson = shape_geo.Point(json.loads(coordinates))
-                    elif geometry == "LineString":
-                        query_gjson = shape_geo.LineString(json.loads(coordinates))
-                    elif geometry == "Polygon":
-                        query_gjson = shape_geo.Polygon(json.loads(coordinates))
-                    elif geometry == "MultiPoint":
-                        query_gjson = shape_geo.MultiPoint(json.loads(coordinates))
-                    elif geometry == "MultiLineString":
-                        query_gjson = shape_geo.MultiLineString(json.loads(coordinates))
-                    elif geometry == "MultiPolygon":
-                        query_gjson = shape_geo.MultiPolygon(json.loads(coordinates))
+                        if geometry == "Point":
+                            query_gjson = shape_geo.Point(json.loads(coordinates))
+                        elif geometry == "LineString":
+                            query_gjson = shape_geo.LineString(json.loads(coordinates))
+                        elif geometry == "Polygon":
+                            query_gjson = shape_geo.Polygon(json.loads(coordinates))
+                        elif geometry == "MultiPoint":
+                            query_gjson = shape_geo.MultiPoint(json.loads(coordinates))
+                        elif geometry == "MultiLineString":
+                            query_gjson = shape_geo.MultiLineString(json.loads(coordinates))
+                        elif geometry == "MultiPolygon":
+                            query_gjson = shape_geo.MultiPolygon(json.loads(coordinates))
 
-                    # Check specific georelation condition
-                    if georel == "equals":
-                        if geo_entity.equals(query_gjson):
-                            geo_ok = 1
-                        else:
-                            return
-                    elif georel == "within":
-                        if geo_entity.within(query_gjson):
-                            geo_ok = 1
-                        else:
-                            return
-                    elif georel == "intersects":
-                        if geo_entity.intersects(query_gjson):
-                            geo_ok = 1
-                        else:
-                            return
-                    elif re.search("near;", georel):
-                        near_query = georel.split(';')
-                        near_operator = re.findall('[><]|==|>=|<=', near_query[1])
-                        near_geo_queries = (re.split('[><]|==|>=|<=', near_query[1]))
+                        # Check specific georelation condition
+                        if georel == "equals":
+                            if geo_entity.equals(query_gjson):
+                                geo_ok = 1
+                            else:
+                                return
+                        elif georel == "within":
+                            if geo_entity.within(query_gjson):
+                                geo_ok = 1
+                            else:
+                                return
+                        elif georel == "intersects":
+                            if geo_entity.intersects(query_gjson):
+                                geo_ok = 1
+                            else:
+                                return
+                        elif re.search("near;", georel):
+                            near_query = georel.split(';')
+                            near_operator = re.findall('[><]|==|>=|<=', near_query[1])
+                            near_geo_queries = (re.split('[><]|==|>=|<=', near_query[1]))
 
-                        if str(near_geo_queries[0]) == "maxDistance":
-                            if str(near_operator[0]) == "==":
-                                if geo_entity.distance(query_gjson) > float(near_geo_queries[1]):
-                                    return
-                        elif str(near_geo_queries[0]) == "minDistance":
-                            if str(near_operator[0]) == "==":
-                                if geo_entity.distance(query_gjson) < float(near_geo_queries[1]):
-                                    return
-                    elif georel == "contains":
-                        if geo_entity.contains(query_gjson):
-                            geo_ok = 1
-                        else:
-                            return
-                    elif georel == "disjoint":
-                        if geo_entity.disjoint(query_gjson):
-                            geo_ok = 1
-                        else:
-                            return
-                    elif georel == "overlaps":
-                        if geo_entity.overlaps(query_gjson):
-                            geo_ok = 1
-                        else:
-                            return
+                            if str(near_geo_queries[0]) == "maxDistance":
+                                if str(near_operator[0]) == "==":
+                                    if geo_entity.distance(query_gjson) > float(near_geo_queries[1]):
+                                        return
+                            elif str(near_geo_queries[0]) == "minDistance":
+                                if str(near_operator[0]) == "==":
+                                    if geo_entity.distance(query_gjson) < float(near_geo_queries[1]):
+                                        return
+                        elif georel == "contains":
+                            if geo_entity.contains(query_gjson):
+                                geo_ok = 1
+                            else:
+                                return
+                        elif georel == "disjoint":
+                            if geo_entity.disjoint(query_gjson):
+                                geo_ok = 1
+                            else:
+                                return
+                        elif georel == "overlaps":
+                            if geo_entity.overlaps(query_gjson):
+                                geo_ok = 1
+                            else:
+                                return
 
-            # Allowing combination of logical queries
-            for query2 in queries_big:
-                operator = re.findall('[><]|==|>=|<=', query2)
-                queries = (re.split('[><]|==|>=|<=', query2))
-                subqueries_flags.setdefault(queries[0], False)
+                # Allowing combination of logical queries
+                for query2 in queries_big:
+                    operator = re.findall('[><]|==|>=|<=', query2)
+                    queries = (re.split('[><]|==|>=|<=', query2))
+                    subqueries_flags.setdefault(queries[0], False)
 
-                if queries[0] == topic[-1]:
+                    if queries[0] == topic[-1]:
 
-                    if str(operator[0]) == "==":
+                        if str(operator[0]) == "==":
 
-                        if isinstance(data2["value"], list):
-                            for data3 in data2["value"]:
-                                if data3 == queries[1]:
+                            if isinstance(data2["value"], list):
+                                for data3 in data2["value"]:
+                                    if data3 == queries[1]:
+                                        subqueries_flags[queries[0]] = True
+
+                            elif data2["value"] == queries[1]:
+                                subqueries_flags[queries[0]] = True
+                        elif queries[1].isnumeric():
+                            if str(operator[0]) == ">":
+                                if float(data2["value"]) > float(queries[1]):
+                                    subqueries_flags[queries[0]] = True
+                            elif str(operator[0]) == "<":
+                                if float(data2["value"]) < float(queries[1]):
+                                    subqueries_flags[queries[0]] = True
+                            elif str(operator[0]) == "<=":
+                                if float(data2["value"]) <= float(queries[1]):
+                                    subqueries_flags[queries[0]] = True
+                            elif str(operator[0]) == ">=":
+                                if float(data2["value"]) >= float(queries[1]):
                                     subqueries_flags[queries[0]] = True
 
-                        elif data2["value"] == queries[1]:
-                            subqueries_flags[queries[0]] = True
-                    elif queries[1].isnumeric():
-                        if str(operator[0]) == ">":
-                            if float(data2["value"]) > float(queries[1]):
-                                subqueries_flags[queries[0]] = True
-                        elif str(operator[0]) == "<":
-                            if float(data2["value"]) < float(queries[1]):
-                                subqueries_flags[queries[0]] = True
-                        elif str(operator[0]) == "<=":
-                            if float(data2["value"]) <= float(queries[1]):
-                                subqueries_flags[queries[0]] = True
-                        elif str(operator[0]) == ">=":
-                            if float(data2["value"]) >= float(queries[1]):
-                                subqueries_flags[queries[0]] = True
+                # Check topic filters if specified
+                if topics != '' and topics != "#":
+                    if topic[-1] in topics:
+                        data[topic[-1]] = data2
+                    if topic[-1].endswith("_CreatedAt") or topic[-1].endswith("_modifiedAt"):
+                        if timee != '':
+                            time_topic = (topic[-1].split('_timerelsystem_'))
+                            if context_given == '+':
+                                try:
+                                    time_topic[-2] = data_from_web["@context"][time_topic[-2]]
+                                except:
+                                    dummy_command = "This is a dummy command for except"
 
-            # Check topic filters if specified
-            if topics != '' and topics != "#":
-                if topic[-1] in topics:
-                    data[topic[-1]] = data2
-                if topic[-1].endswith("_CreatedAt") or topic[-1].endswith("_modifiedAt"):
-                    if timee != '':
-                        time_topic = (topic[-1].split('_timerelsystem_'))
-                        if context_given == '+':
-                            try:
-                                time_topic[-2] = data_from_web["@context"][time_topic[-2]]
-                            except:
-                                dummy_command = "This is a dummy command for except"
+                            data[time_topic[-2]][time_topic[-1]] = data2
 
-                        data[time_topic[-2]][time_topic[-1]] = data2
-
-            else:
-                if topic[-1].endswith("_CreatedAt") or topic[-1].endswith("_modifiedAt"):
-                    if timee != '':
-                        time_topic = (topic[-1].split('_timerelsystem_'))
-                        if context_given == '+':
-                            try:
-                                time_topic[-2] = data_from_web["@context"][time_topic[-2]]
-                            except:
-                                dummy_command = "This is a dummy command for except"
-
-                        data[time_topic[-2]][time_topic[-1]] = data2
                 else:
-                    data[topic[-1]] = data2
+                    if topic[-1].endswith("_CreatedAt") or topic[-1].endswith("_modifiedAt"):
+                        if timee != '':
+                            time_topic = (topic[-1].split('_timerelsystem_'))
+                            if context_given == '+':
+                                try:
+                                    time_topic[-2] = data_from_web["@context"][time_topic[-2]]
+                                except:
+                                    dummy_command = "This is a dummy command for except"
+
+                            data[time_topic[-2]][time_topic[-1]] = data2
+                    else:
+                        data[topic[-1]] = data2
+            except PayloadParseError as exc:
+                _bump_diagnostic('payload_parse_errors')
+                _log_message_error('payload_parse_error', exc, topic=getattr(msg, 'topic', None),
+                                   preview=getattr(exc, 'preview', None))
+                continue
+            except (KeyError, TypeError, IndexError, ValueError, json.JSONDecodeError) as exc:
+                _bump_diagnostic('reconstruction_errors')
+                _log_message_error('reconstruction_error', exc, topic=getattr(msg, 'topic', None))
+                continue
 
         data['@context'] = contextt
 
@@ -1029,7 +1305,20 @@ def subscribe(broker, port, topics, qos, context_given, notification_queue=None,
         print("Connected with result code " + str(rc))
 
     def on_message(client, userdata, msg):
-        if msg.payload.decode() != '':
+        # A malformed individual message (bad encoding, bad JSON/literal,
+        # or a payload that reconstructs into an unexpected NGSI-LD shape)
+        # must drop only this one notification, not the MQTT connection -
+        # this callback runs on client.loop_forever()'s thread, and letting
+        # an exception escape it kills the whole provider subscription
+        # worker.
+        try:
+            try:
+                payload_is_empty = msg.payload.decode('utf-8', errors='strict') == ''
+            except UnicodeDecodeError as e:
+                raise PayloadParseError(f'Invalid UTF-8 payload: {e}', preview=_payload_preview(msg.payload)) from e
+            if payload_is_empty:
+                print("\n Message on topic:" + msg.topic + ", was deleted")
+                return
             messagez = [msg]
             if not (msg.topic.endswith("_CreatedAt") or msg.topic.endswith("_modifiedAt")):
                 entity = recreate_single_entity(messagez, timee=0, context_given=context_given)
@@ -1045,8 +1334,14 @@ def subscribe(broker, port, topics, qos, context_given, notification_queue=None,
                             notification_queue.put(entity)
                     else:
                         print(json.dumps(entity, indent=4, ensure_ascii=False))
-        else:
-            print("\n Message on topic:" + msg.topic + ", was deleted")
+        except PayloadParseError as exc:
+            _bump_diagnostic('payload_parse_errors')
+            _log_message_error('payload_parse_error', exc, topic=msg.topic, broker=broker,
+                               provider_key=provider_key, preview=getattr(exc, 'preview', None))
+        except (KeyError, TypeError, IndexError, ValueError, json.JSONDecodeError) as exc:
+            _bump_diagnostic('reconstruction_errors')
+            _log_message_error('reconstruction_error', exc, topic=msg.topic, broker=broker,
+                               provider_key=provider_key)
 
     client = mqtt.Client()
     client.on_connect = on_connect
@@ -1423,27 +1718,82 @@ def post_subscription(data, broker, port, qos, my_area="unknown_area", notificat
         "provider_lock": provider_lock,
         "ws_connected": False,
         "disconnected_at": time.monotonic(),
+        "area": area,
+        "context": context,
     }
     print(f"Subscription {sub_id} registered.")
     return sub_id
 
 
-def delete_entity(entity_id, broker, port, hlink='+', my_area="unknown_area"):
-    if hlink != '+':
-        hlink = hlink.replace("/", "§")
-    top = my_area + '/entities/' + hlink + '/+/+/' + entity_id + '/#'
-    if not check_existence(broker, port, top):
-        raise ValueError(f"Entity {entity_id} does not exist")
-    clear_retained(broker, port, top)
-    tp = exists_topic.split("/")[-4]
-    top_check_for_advert = my_area + '/entities/' + hlink + '/' + tp + '/+/+/#'
-    if not singleidadvertisement:
-        if not check_existence(broker, port, top_check_for_advert):
-            special = 'provider/' + broker + '/' + str(port) + '/' + my_area + '/' + hlink + '/+'
-            clear_retained(broker, port, special)
+def describe_subscription_request(data):
+    """Normalize an NGSI-LD subscription body into the same filter fields
+    post_subscription() stores on active_subscriptions[sub_id] (type,
+    entity_id, watched_attributes, context, area) - used by the one-shot
+    WS endpoint to decide whether a reconnect request with an already-known
+    subscription id describes the SAME logical subscription, without
+    duplicating a live subscription's registration."""
+    if 'type' not in data or str(data['type']) != "Subscription":
+        raise ValueError("Invalid or missing subscription type")
+    if 'id' not in data:
+        raise ValueError("Subscription missing id")
+
+    truetype = ''
+    true_id = ''
+    watched_attributes_flag = False
+    watched_attributes = ''
+
+    if '@context' in data:
+        context = data['@context'] if isinstance(data['@context'], str) else data['@context'][0]
+        context = context.replace("/", CONTEXT_SEPARATOR)
     else:
-        special = 'provider/' + broker + '/' + str(port) + '/' + my_area + '/' + hlink + '/' + tp + '/' + entity_id
-        clear_retained(broker, port, special)
+        context = '+'
+
+    if 'entities' in data:
+        info_entities = data['entities'][0]
+        if 'type' in info_entities:
+            truetype = str(info_entities['type'])
+        if 'id' in info_entities:
+            true_id = str(info_entities['id'])
+
+    if 'watchedAttributes' in data:
+        watched_attributes = data['watchedAttributes']
+        if watched_attributes is None:
+            raise ValueError("watchedAttributes without content")
+        watched_attributes_flag = True
+
+    if truetype == '':
+        truetype = '+'
+
+    return {
+        "sub_id": str(data['id']),
+        "type": truetype,
+        "entity_id": true_id,
+        "watched_attributes": watched_attributes if watched_attributes_flag else None,
+        "context": context,
+        "area": data.get('area', ['+']),
+    }
+
+
+def subscription_request_matches(info, broker, port, data):
+    """True if `data` (a reconnect request) describes the same logical
+    subscription as the already-registered `info` (active_subscriptions
+    entry) for the given broker/port."""
+    parsed = describe_subscription_request(data)
+    return (
+        str(info.get("broker")) == str(broker)
+        and int(info.get("port")) == int(port)
+        and info.get("type") == parsed["type"]
+        and (info.get("entity_id") or "") == (parsed["entity_id"] or "")
+        and info.get("watched_attributes") == parsed["watched_attributes"]
+        and info.get("context") == parsed["context"]
+        and info.get("area") == parsed["area"]
+    )
+
+
+def delete_entity(entity_id, broker, port, hlink='+', my_area="unknown_area"):
+    result = _delete_entities_internal([entity_id], broker, port, hlink, my_area, chunk_size=1)
+    if entity_id not in result['deleted']:
+        raise ValueError(f"Entity {entity_id} does not exist")
 
 
 def delete_entity_attr(entity_id, attr_name, broker, port, hlink='+', my_area="unknown_area"):
@@ -1586,29 +1936,10 @@ def get_entities(broker, port, hlink='+', entity_type=None, entity_id=None, attr
 
 
 def batch_delete(ids, broker, port, hlink='+', my_area="unknown_area"):
-    if hlink != '+':
-        hlink = hlink.replace("/", "§")
-    for entity_id in ids:
-        top = my_area + '/entities/' + hlink + '/+/+/' + entity_id + '/#'
-        if not check_existence(broker, port, top):
-            print(f"Entity {entity_id} does not exist, skipping")
-            continue
-        T1 = threading.Thread(target=clear_retained, args=(broker, port, top))
-        T1.start()
-        T1.join()
-        tp = exists_topic.split("/")[-4]
-        top_check_for_advert = my_area + '/entities/' + hlink + '/' + tp + '/#'
-        if not singleidadvertisement:
-            if not check_existence(broker, port, top_check_for_advert):
-                special = 'provider/' + broker + '/' + str(port) + '/' + my_area + '/' + hlink + '/+'
-                T1 = threading.Thread(target=clear_retained, args=(broker, port, special))
-                T1.start()
-                T1.join()
-        else:
-            special = 'provider/' + broker + '/' + str(port) + '/' + my_area + '/' + hlink + '/+/' + entity_id
-            T1 = threading.Thread(target=clear_retained, args=(broker, port, special))
-            T1.start()
-            T1.join()
+    result = _delete_entities_internal(ids, broker, port, hlink, my_area)
+    for entity_id in result['missing']:
+        print(f"Entity {entity_id} does not exist, skipping")
+    return result
 
 
 def batch_create(entities, broker, port, qos=0, my_area="unknown_area", my_loc="unknown_location"):

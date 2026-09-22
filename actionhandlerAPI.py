@@ -29,6 +29,8 @@ from actionhandler import (
     post_entity,
     post_entity_upsert,
     post_subscription,
+    register_subscription_cleanup,
+    subscription_request_matches,
     list_subscription_providers,
     start_subscription_reaper,
     stop_all_subscriptions,
@@ -38,6 +40,10 @@ from actionhandler import (
 
 # Per-subscription notification queues (populated by POST /subscriptions)
 notification_queues: dict = {}
+# sub_id -> True while a one-shot WS (/subscriptions/ws) is actively
+# streaming for it. Lets a reconnect attempt on an already-attached
+# subscription be rejected instead of two sockets racing on one queue.
+one_shot_ws_owners: dict = {}
 QUEUE_WAIT_SECONDS = 0.005
 WS_HEARTBEAT_IDLE_SECONDS = 30.0
 WS_CLOSED_EXCEPTIONS = (WebSocketDisconnect, ConnectionClosed)
@@ -341,6 +347,7 @@ def create_subscription(
         sub_id = post_subscription(body, broker, port, qos, my_area=my_area,
                                    notification_queue=notification_q)
         notification_queues[sub_id] = notification_q
+        register_subscription_cleanup(sub_id, lambda: notification_queues.pop(sub_id, None))
         return {"status": "created", "id": sub_id}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -538,14 +545,26 @@ async def subscription_notifications_ws(websocket: WebSocket, subscriptionId: st
 @app.websocket("/ngsi-ld/v1/subscriptions/ws")
 async def subscription_websocket(websocket: WebSocket):
     """
-    Create a subscription and receive its notifications in a single WebSocket connection.
+    Create-or-resume a subscription and stream its notifications over a
+    single WebSocket connection.
 
     Flow:
       1. Connect.
       2. Send subscription JSON (NGSI-LD format + optional "broker"/"port"/"qos" fields).
       3. Receive: {"status": "subscribed", "id": "<sub_id>"}
       4. Receive entity JSON objects as they arrive.
-      5. Disconnect → subscription is automatically stopped.
+      5. Disconnect at any time. The logical subscription, its advertisement
+         watcher and its provider child processes keep running in the
+         background (same as WS /ngsi-ld/v1/subscriptions/{id}/ws) - a
+         WebSocket dropping (timeout, network blip, client restart) is a
+         transport failure, not a request to delete the subscription.
+         Reconnect here with the SAME subscription JSON (same id, same
+         filter) to resume receiving on the same subscription; sending a
+         different broker/port/type/id/watchedAttributes/area/context for
+         an id that's already active is rejected rather than silently
+         reused. The abandoned-subscription reaper reclaims a subscription
+         that nobody reconnects to within SUBSCRIPTION_IDLE_GRACE_SECONDS.
+         Use DELETE /ngsi-ld/v1/subscriptions/{id} to stop it explicitly.
     """
     await websocket.accept()
 
@@ -559,23 +578,68 @@ async def subscription_websocket(websocket: WebSocket):
     port   = raw.get("port",   default_broker_port)
     qos    = raw.get("qos",    0)
 
-    notification_q = multiprocessing.Queue()
-    loop = asyncio.get_event_loop()
-
     try:
-        # post_subscription() does blocking MQTT connect/publish. Running it
-        # directly on the event loop would freeze every other connection on
-        # this server for however long that takes - same class of issue as
-        # the get_entities() snapshot call below.
-        sub_id = await loop.run_in_executor(
-            None,
-            lambda: post_subscription(raw, broker, port, qos, notification_queue=notification_q),
-        )
-    except ValueError as e:
-        await websocket.send_json({"error": str(e)})
+        sub_id = str(raw["id"])
+    except (KeyError, TypeError):
+        await websocket.send_json({"error": "Subscription missing id"})
         await websocket.close(code=1008)
         return
 
+    loop = asyncio.get_event_loop()
+    existing = active_subscriptions.get(sub_id)
+
+    if existing is not None:
+        # Reconnect: reuse the running subscription and its queue instead of
+        # creating a duplicate. No post_subscription() call here - that
+        # would spin up a second advertisement watcher and a second set of
+        # provider child processes for the same logical subscription.
+        try:
+            same = subscription_request_matches(existing, broker, port, raw)
+        except ValueError as e:
+            await websocket.send_json({"error": str(e)})
+            await websocket.close(code=1008)
+            return
+        if not same:
+            await websocket.send_json({
+                "error": f"Subscription {sub_id} already exists with different parameters"
+            })
+            await websocket.close(code=1008)
+            return
+        if sub_id in one_shot_ws_owners:
+            await websocket.send_json({
+                "error": f"Subscription {sub_id} already has an active WebSocket consumer"
+            })
+            await websocket.close(code=1008)
+            return
+        notification_q = notification_queues.get(sub_id)
+        if notification_q is None:
+            await websocket.send_json({"error": f"Subscription {sub_id} has no notification queue"})
+            await websocket.close(code=1011)
+            return
+    else:
+        notification_q = multiprocessing.Queue()
+        try:
+            # post_subscription() does blocking MQTT connect/publish. Running
+            # it directly on the event loop would freeze every other
+            # connection on this server for however long that takes - same
+            # class of issue as the get_entities() snapshot call elsewhere.
+            created_id = await loop.run_in_executor(
+                None,
+                lambda: post_subscription(raw, broker, port, qos, notification_queue=notification_q),
+            )
+        except ValueError as e:
+            await websocket.send_json({"error": str(e)})
+            await websocket.close(code=1008)
+            return
+        sub_id = created_id
+        notification_queues[sub_id] = notification_q
+        register_subscription_cleanup(sub_id, lambda: notification_queues.pop(sub_id, None))
+
+    # Nothing above this point awaits between the one_shot_ws_owners check
+    # and this assignment, so two reconnect attempts racing on the same
+    # sub_id can't both pass the check before either claims ownership.
+    one_shot_ws_owners[sub_id] = True
+    mark_subscription_connected(sub_id)
     await websocket.send_json({"status": "subscribed", "id": sub_id})
 
     async def wait_for_disconnect():
@@ -624,12 +688,14 @@ async def subscription_websocket(websocket: WebSocket):
         pass
     finally:
         disconnect_task.cancel()
-        # stop_subscription() joins the advertisement thread (up to 5s) and
-        # any provider child processes (up to ~4s each). Calling it inline
-        # here would block the event loop for that whole time, stalling
-        # every other in-flight request on this server - including a plain
-        # POST /entities from an unrelated client. Run it in a thread.
-        await loop.run_in_executor(None, lambda: stop_subscription(sub_id))
+        one_shot_ws_owners.pop(sub_id, None)
+        # The WebSocket dropping is a transport failure, not a delete
+        # request: leave the logical subscription, its advertisement
+        # watcher and provider child processes running so a reconnect can
+        # resume it. Only mark it idle so the reaper can reclaim it if
+        # nobody ever reconnects; stop_subscription() is no longer called
+        # from here (see DELETE /subscriptions/{id} for explicit teardown).
+        mark_subscription_disconnected(sub_id)
 
 
 # ---------------------------------------------------------------------------

@@ -10,6 +10,7 @@ import uuid
 from pathlib import Path
 from urllib.parse import quote
 
+import paho.mqtt.client as mqtt
 import requests
 import websockets
 
@@ -39,18 +40,18 @@ def wait_for_tcp(host, port, timeout=5.0):
     return False
 
 
-def api_is_ready():
+def api_is_ready(base_url=BASE_URL):
     try:
-        response = requests.get(f"{BASE_URL}/openapi.json", timeout=1)
+        response = requests.get(f"{base_url}/openapi.json", timeout=1)
         return response.status_code == 200
     except requests.RequestException:
         return False
 
 
-def wait_for_api(timeout=15.0):
+def wait_for_api(timeout=15.0, base_url=BASE_URL):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        if api_is_ready():
+        if api_is_ready(base_url):
             return True
         time.sleep(0.25)
     return False
@@ -859,7 +860,12 @@ class ComdexApiIntegrationTests(unittest.TestCase):
         asyncio.run(self._ws_create_and_stream_in_one_connection())
 
     async def _ws_create_and_stream_in_one_connection(self):
-        """WS /subscriptions/ws creates a subscription inline and auto-stops it on disconnect."""
+        """WS /subscriptions/ws creates a subscription inline and streams notifications.
+
+        A WebSocket disconnect is a transport failure, not a delete request:
+        the logical subscription must survive it (see test_34+ for the full
+        create-or-resume lifecycle). Only explicit DELETE removes it here.
+        """
         entity_type = self.unique("ComdexWsStream")
         entity_id   = f"urn:ngsi-ld:{entity_type}:001"
         sub_id      = None
@@ -885,21 +891,16 @@ class ComdexApiIntegrationTests(unittest.TestCase):
             self.post_entity(self.entity_payload(entity_type, entity_id), BROKER2_PORT)
             _, msg = await self.wait_for_entity_message(ws, entity_id, timeout=8)
             self.assertEqual(entity_id, msg["id"])
-        # The async-with block exits here: client sends a close frame. The
-        # server actively watches for the disconnect (races it against
-        # notification delivery) instead of only discovering it on the next
-        # attempted send, so it should stop the subscription shortly on its own.
+        # The async-with block exits here: client sends a close frame.
 
-        deadline = time.monotonic() + 8
-        active_ids = set()
-        while time.monotonic() < deadline:
-            subs = self.request_json("GET", "/ngsi-ld/v1/subscriptions")
-            active_ids = {s["id"] for s in subs}
-            if sub_id not in active_ids:
-                break
-            await asyncio.sleep(0.25)
+        await asyncio.sleep(1)
+        subs = self.request_json("GET", "/ngsi-ld/v1/subscriptions")
+        active_ids = {s["id"] for s in subs}
+        self.assertIn(sub_id, active_ids, "WebSocket disconnect must not delete the subscription")
 
-        self.assertNotIn(sub_id, active_ids, "One-shot subscription must be removed after WS disconnect")
+        self.session.delete(f"{BASE_URL}/ngsi-ld/v1/subscriptions/{quote(sub_id, safe='')}", timeout=10)
+        subs = self.request_json("GET", "/ngsi-ld/v1/subscriptions")
+        self.assertNotIn(sub_id, {s["id"] for s in subs}, "Explicit DELETE must still remove the subscription")
 
     # ------------------------------------------------------------------
     # test_18 — WS client disconnect leaves subscription alive; reconnect works
@@ -1026,6 +1027,854 @@ class ComdexApiIntegrationTests(unittest.TestCase):
 
             self.assertEqual(2, len(received_ids),
                              "Without q filter, all entity types must be delivered")
+
+    # ------------------------------------------------------------------
+    # test_23 — one-shot WS subscription must survive the idle-grace reaper
+    # while its WebSocket stays connected.
+    #
+    # Regression for: POST /ngsi-ld/v1/subscriptions/ws registered a
+    # subscription as ws_connected=False (disconnected_at=now), the same
+    # idle state used by the reconnectable endpoint, so the abandoned-
+    # subscription reaper removed the subscription (and its provider child
+    # processes) after SUBSCRIPTION_IDLE_GRACE_SECONDS even though the
+    # client's WebSocket was still open and actively receiving.
+    # ------------------------------------------------------------------
+
+    def test_23_ws_one_shot_subscription_survives_idle_grace_while_connected(self):
+        asyncio.run(self._ws_one_shot_subscription_survives_idle_grace_while_connected())
+
+    async def _ws_one_shot_subscription_survives_idle_grace_while_connected(self):
+        """A live one-shot WS subscription must not be reaped as abandoned."""
+        grace_seconds = 3
+        port = 8010
+        env = dict(os.environ)
+        env["COMDEX_SUBSCRIPTION_IDLE_GRACE_SECONDS"] = str(grace_seconds)
+        env["COMDEX_SUBSCRIPTION_REAPER_POLL_SECONDS"] = "1"
+
+        root = Path(__file__).resolve().parents[1]
+        proc = subprocess.Popen(
+            [
+                sys.executable, "-m", "uvicorn", "actionhandlerAPI:app",
+                "--host", "127.0.0.1", "--port", str(port),
+            ],
+            cwd=root, env=env,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        self.addCleanup(self._terminate_process, proc)
+        try:
+            self.assertTrue(
+                wait_for_api(timeout=15.0, base_url=f"http://127.0.0.1:{port}"),
+                "Dedicated test server did not start",
+            )
+
+            base_url = f"http://127.0.0.1:{port}"
+            ws_base_url = base_url.replace("http://", "ws://")
+            entity_type = self.unique("ComdexIdleGrace")
+            entity_id = f"urn:ngsi-ld:{entity_type}:001"
+            self.addCleanup(self.delete_entity_best_effort, entity_id, BROKER2_PORT)
+
+            uri = f"{ws_base_url}/ngsi-ld/v1/subscriptions/ws"
+            async with websockets.connect(uri) as ws:
+                await ws.send(json.dumps({
+                    "id": f"urn:subscription:{entity_type}",
+                    "type": "Subscription",
+                    "entities": [{"type": entity_type}],
+                    "@context": CONTEXT,
+                    "broker": BROKER_HOST,
+                    "port": BROKER2_PORT,
+                    "qos": QOS,
+                }))
+                _, subscribed = await self.recv_json(ws, timeout=5)
+                self.assertEqual("subscribed", subscribed["status"])
+                sub_id = subscribed["id"]
+
+                # Outlive the idle grace period (and several reaper polls)
+                # while the WebSocket remains connected the whole time.
+                await asyncio.sleep(grace_seconds * 3)
+
+                response = requests.get(f"{base_url}/ngsi-ld/v1/subscriptions/{sub_id}", timeout=5)
+                self.assertEqual(
+                    200, response.status_code,
+                    "Live subscription must not be reaped while its WebSocket is connected",
+                )
+
+                # It must still be functional, not just present.
+                self.post_entity(self.entity_payload(entity_type, entity_id), BROKER2_PORT)
+                _, msg = await self.wait_for_entity_message(ws, entity_id, timeout=8)
+                self.assertEqual(entity_id, msg["id"])
+        finally:
+            self._terminate_process(proc)
+
+    @staticmethod
+    def _terminate_process(proc):
+        if proc.poll() is not None:
+            return
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
+
+    # ------------------------------------------------------------------
+    # Deletion-engine regression tests (test_24+)
+    #
+    # These exercise the refactored delete_entity()/batch_delete() engine
+    # in actionhandler.py. Retained-topic presence is checked directly over
+    # MQTT (not through the ComDeX API) because there is no HTTP endpoint
+    # that lists provider advertisements — this is test-only introspection
+    # of internal state, unrelated to the "use the API, not raw MQTT" rule
+    # that applies to the benchmark harness.
+    # ------------------------------------------------------------------
+
+    def mqtt_topic_exists(self, broker, port, topic_filter, timeout=2.0):
+        found = []
+
+        def on_message(client, userdata, msg):
+            if msg.retain:
+                found.append(msg.topic)
+
+        client = mqtt.Client()
+        client.on_message = on_message
+        client.connect(broker, port)
+        client.loop_start()
+        client.subscribe(topic_filter, qos=1)
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline and not found:
+            time.sleep(0.05)
+        client.loop_stop()
+        client.disconnect()
+        return bool(found)
+
+    def advertisement_topic(self, broker, port, area, context, entity_type, entity_id=None):
+        hlink = context.replace("/", "§")
+        base = f"provider/{broker}/{port}/{area}/{hlink}/{entity_type}"
+        return base if entity_id is None else f"{base}/{entity_id}"
+
+    def entity_topic_filter(self, area, context, entity_type, entity_id):
+        hlink = context.replace("/", "§")
+        return f"{area}/entities/{hlink}/{entity_type}/+/{entity_id}/#"
+
+    def test_24_single_delete_removes_topics_and_advertisement(self):
+        """Deleting the only entity of a type must clear its attribute topics and the advertisement."""
+        entity_type = self.unique("ComdexDelSingle")
+        entity_id = f"urn:ngsi-ld:{entity_type}:001"
+        self.post_entity(self.entity_payload(entity_type, entity_id), BROKER1_PORT)
+        self.assertTrue(
+            self.mqtt_topic_exists(BROKER_HOST, BROKER1_PORT, self.entity_topic_filter(AREA, PRIMARY_CONTEXT, entity_type, entity_id)),
+            "Entity must exist right after creation",
+        )
+        self.request_json(
+            "DELETE",
+            f"/ngsi-ld/v1/entities/{quote(entity_id, safe='')}"
+            f"?broker={BROKER_HOST}&port={BROKER1_PORT}&hlink={PRIMARY_CONTEXT}&my_area={AREA}",
+        )
+        self.assertFalse(
+            self.mqtt_topic_exists(BROKER_HOST, BROKER1_PORT, self.entity_topic_filter(AREA, PRIMARY_CONTEXT, entity_type, entity_id)),
+            "Entity attribute topics must be gone after delete",
+        )
+        self.assertFalse(
+            self.mqtt_topic_exists(BROKER_HOST, BROKER1_PORT, self.advertisement_topic(BROKER_HOST, BROKER1_PORT, AREA, PRIMARY_CONTEXT, entity_type)),
+            "Provider advertisement must be removed once the last entity of that type is gone",
+        )
+
+    def test_25_single_delete_keeps_advertisement_when_sibling_remains(self):
+        """Deleting one entity must not remove the advertisement while a sibling of the same type exists."""
+        entity_type = self.unique("ComdexDelSibling")
+        id_a = f"urn:ngsi-ld:{entity_type}:A"
+        id_b = f"urn:ngsi-ld:{entity_type}:B"
+        self.addCleanup(self.delete_entity_best_effort, id_b, BROKER1_PORT)
+        self.post_entity(self.entity_payload(entity_type, id_a), BROKER1_PORT)
+        self.post_entity(self.entity_payload(entity_type, id_b), BROKER1_PORT)
+
+        self.request_json(
+            "DELETE",
+            f"/ngsi-ld/v1/entities/{quote(id_a, safe='')}"
+            f"?broker={BROKER_HOST}&port={BROKER1_PORT}&hlink={PRIMARY_CONTEXT}&my_area={AREA}",
+        )
+        self.assertFalse(
+            self.mqtt_topic_exists(BROKER_HOST, BROKER1_PORT, self.entity_topic_filter(AREA, PRIMARY_CONTEXT, entity_type, id_a)),
+            "Deleted entity's own topics must be gone",
+        )
+        self.assertTrue(
+            self.mqtt_topic_exists(BROKER_HOST, BROKER1_PORT, self.entity_topic_filter(AREA, PRIMARY_CONTEXT, entity_type, id_b)),
+            "Sibling entity of the same type must remain",
+        )
+        self.assertTrue(
+            self.mqtt_topic_exists(BROKER_HOST, BROKER1_PORT, self.advertisement_topic(BROKER_HOST, BROKER1_PORT, AREA, PRIMARY_CONTEXT, entity_type)),
+            "Advertisement must remain while a sibling entity of that type still exists",
+        )
+
+    def test_26_delete_nonexistent_entity_returns_404(self):
+        entity_id = self.unique("urn:ngsi-ld:ComdexDelMissing:")
+        self.request_json(
+            "DELETE",
+            f"/ngsi-ld/v1/entities/{quote(entity_id, safe='')}"
+            f"?broker={BROKER_HOST}&port={BROKER1_PORT}&hlink={PRIMARY_CONTEXT}&my_area={AREA}",
+            expected_status=404,
+        )
+
+    def test_27_batch_delete_same_type_removes_all_and_advertisement(self):
+        entity_type = self.unique("ComdexBatchSame")
+        ids = [f"urn:ngsi-ld:{entity_type}:{i:03}" for i in range(12)]
+        for eid in ids:
+            self.post_entity(self.entity_payload(entity_type, eid), BROKER1_PORT)
+
+        self.request_json(
+            "POST",
+            f"/ngsi-ld/v1/entityOperations/delete?broker={BROKER_HOST}&port={BROKER1_PORT}"
+            f"&hlink={PRIMARY_CONTEXT}&my_area={AREA}",
+            json=ids,
+        )
+        for eid in ids:
+            self.assertFalse(
+                self.mqtt_topic_exists(BROKER_HOST, BROKER1_PORT, self.entity_topic_filter(AREA, PRIMARY_CONTEXT, entity_type, eid)),
+                f"{eid} must be gone after batch delete",
+            )
+        self.assertFalse(
+            self.mqtt_topic_exists(BROKER_HOST, BROKER1_PORT, self.advertisement_topic(BROKER_HOST, BROKER1_PORT, AREA, PRIMARY_CONTEXT, entity_type)),
+            "Advertisement must be removed once every entity of that type is gone",
+        )
+
+    def test_28_batch_delete_partial_type_keeps_remaining_and_advertisement(self):
+        entity_type = self.unique("ComdexBatchPartial")
+        ids = [f"urn:ngsi-ld:{entity_type}:{i:03}" for i in range(20)]
+        to_delete, to_keep = ids[:10], ids[10:]
+        for eid in ids:
+            self.post_entity(self.entity_payload(entity_type, eid), BROKER1_PORT)
+        self.addCleanup(lambda: [self.delete_entity_best_effort(e, BROKER1_PORT) for e in to_keep])
+
+        self.request_json(
+            "POST",
+            f"/ngsi-ld/v1/entityOperations/delete?broker={BROKER_HOST}&port={BROKER1_PORT}"
+            f"&hlink={PRIMARY_CONTEXT}&my_area={AREA}",
+            json=to_delete,
+        )
+        for eid in to_delete:
+            self.assertFalse(self.mqtt_topic_exists(BROKER_HOST, BROKER1_PORT, self.entity_topic_filter(AREA, PRIMARY_CONTEXT, entity_type, eid)))
+        for eid in to_keep:
+            self.assertTrue(self.mqtt_topic_exists(BROKER_HOST, BROKER1_PORT, self.entity_topic_filter(AREA, PRIMARY_CONTEXT, entity_type, eid)),
+                            f"{eid} must remain: only half the type's entities were deleted")
+        self.assertTrue(
+            self.mqtt_topic_exists(BROKER_HOST, BROKER1_PORT, self.advertisement_topic(BROKER_HOST, BROKER1_PORT, AREA, PRIMARY_CONTEXT, entity_type)),
+            "Advertisement must remain: entities of this type still exist",
+        )
+
+    def test_29_batch_delete_mixed_types_handled_independently(self):
+        type_a = self.unique("ComdexMixedA")
+        type_b = self.unique("ComdexMixedB")
+        ids_a = [f"urn:ngsi-ld:{type_a}:{i}" for i in range(5)]
+        ids_b = [f"urn:ngsi-ld:{type_b}:{i}" for i in range(5)]
+        for eid in ids_a:
+            self.post_entity(self.entity_payload(type_a, eid), BROKER1_PORT)
+        for eid in ids_b:
+            self.post_entity(self.entity_payload(type_b, eid), BROKER1_PORT)
+        self.addCleanup(lambda: [self.delete_entity_best_effort(e, BROKER1_PORT) for e in ids_b])
+
+        # Delete only type A entirely; type B must be completely untouched.
+        self.request_json(
+            "POST",
+            f"/ngsi-ld/v1/entityOperations/delete?broker={BROKER_HOST}&port={BROKER1_PORT}"
+            f"&hlink={PRIMARY_CONTEXT}&my_area={AREA}",
+            json=ids_a,
+        )
+        self.assertFalse(
+            self.mqtt_topic_exists(BROKER_HOST, BROKER1_PORT, self.advertisement_topic(BROKER_HOST, BROKER1_PORT, AREA, PRIMARY_CONTEXT, type_a)),
+            "Type A advertisement must be removed",
+        )
+        self.assertTrue(
+            self.mqtt_topic_exists(BROKER_HOST, BROKER1_PORT, self.advertisement_topic(BROKER_HOST, BROKER1_PORT, AREA, PRIMARY_CONTEXT, type_b)),
+            "Type B advertisement must be unaffected by deleting all of type A "
+            "(regression: the old wildcard advertisement-clear topic could wipe out other types)",
+        )
+        for eid in ids_b:
+            self.assertTrue(self.mqtt_topic_exists(BROKER_HOST, BROKER1_PORT, self.entity_topic_filter(AREA, PRIMARY_CONTEXT, type_b, eid)))
+
+    def test_30_batch_delete_duplicate_ids_no_error(self):
+        entity_type = self.unique("ComdexDup")
+        entity_id = f"urn:ngsi-ld:{entity_type}:001"
+        self.post_entity(self.entity_payload(entity_type, entity_id), BROKER1_PORT)
+
+        self.request_json(
+            "POST",
+            f"/ngsi-ld/v1/entityOperations/delete?broker={BROKER_HOST}&port={BROKER1_PORT}"
+            f"&hlink={PRIMARY_CONTEXT}&my_area={AREA}",
+            json=[entity_id, entity_id, entity_id],
+        )
+        self.assertFalse(self.mqtt_topic_exists(BROKER_HOST, BROKER1_PORT, self.entity_topic_filter(AREA, PRIMARY_CONTEXT, entity_type, entity_id)))
+
+    def test_31_batch_delete_mixed_existing_and_missing_ids(self):
+        entity_type = self.unique("ComdexMixedExist")
+        existing = f"urn:ngsi-ld:{entity_type}:real"
+        missing = f"urn:ngsi-ld:{entity_type}:ghost"
+        self.post_entity(self.entity_payload(entity_type, existing), BROKER1_PORT)
+
+        response = self.request_json(
+            "POST",
+            f"/ngsi-ld/v1/entityOperations/delete?broker={BROKER_HOST}&port={BROKER1_PORT}"
+            f"&hlink={PRIMARY_CONTEXT}&my_area={AREA}",
+            json=[existing, missing],
+        )
+        self.assertEqual(2, response["count"], "Batch response must count the input, not just what existed")
+        self.assertFalse(self.mqtt_topic_exists(BROKER_HOST, BROKER1_PORT, self.entity_topic_filter(AREA, PRIMARY_CONTEXT, entity_type, existing)))
+
+    def test_32_delete_wildcard_hlink_finds_entity_created_with_explicit_context(self):
+        entity_type = self.unique("ComdexWildcardHlink")
+        entity_id = f"urn:ngsi-ld:{entity_type}:001"
+        self.post_entity(self.entity_payload(entity_type, entity_id), BROKER1_PORT)
+
+        self.request_json(
+            "DELETE",
+            f"/ngsi-ld/v1/entities/{quote(entity_id, safe='')}?broker={BROKER_HOST}&port={BROKER1_PORT}&my_area={AREA}",
+        )
+        self.assertFalse(self.mqtt_topic_exists(BROKER_HOST, BROKER1_PORT, self.entity_topic_filter(AREA, PRIMARY_CONTEXT, entity_type, entity_id)))
+
+    def test_33_singleidadvertisement_true_mode_scopes_advertisement_per_entity(self):
+        """With singleidadvertisement=True, each entity has its own advertisement
+        topic; deleting one entity must not touch a sibling's advertisement."""
+        asyncio.run(self._singleidadvertisement_true_mode_scopes_advertisement_per_entity())
+
+    async def _singleidadvertisement_true_mode_scopes_advertisement_per_entity(self):
+        port = 8011
+        env = dict(os.environ)
+        env["COMDEX_SINGLE_ID_ADVERTISEMENT"] = "true"
+        root = Path(__file__).resolve().parents[1]
+        proc = subprocess.Popen(
+            [sys.executable, "-m", "uvicorn", "actionhandlerAPI:app", "--host", "127.0.0.1", "--port", str(port)],
+            cwd=root, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        self.addCleanup(self._terminate_process, proc)
+        base_url = f"http://127.0.0.1:{port}"
+        self.assertTrue(wait_for_api(timeout=15.0, base_url=base_url), "Dedicated singleidadvertisement=True server did not start")
+
+        entity_type = self.unique("ComdexSingleIdAdvert")
+        id_a = f"urn:ngsi-ld:{entity_type}:A"
+        id_b = f"urn:ngsi-ld:{entity_type}:B"
+        self.addCleanup(self.delete_entity_best_effort, id_b, BROKER1_PORT)
+        for eid in (id_a, id_b):
+            requests.post(
+                f"{base_url}/ngsi-ld/v1/entities?broker={BROKER_HOST}&port={BROKER1_PORT}&qos={QOS}&my_area={AREA}",
+                json=self.entity_payload(entity_type, eid), timeout=15,
+            )
+
+        advert_a = self.advertisement_topic(BROKER_HOST, BROKER1_PORT, AREA, PRIMARY_CONTEXT, entity_type, id_a)
+        advert_b = self.advertisement_topic(BROKER_HOST, BROKER1_PORT, AREA, PRIMARY_CONTEXT, entity_type, id_b)
+        self.assertTrue(self.mqtt_topic_exists(BROKER_HOST, BROKER1_PORT, advert_a))
+        self.assertTrue(self.mqtt_topic_exists(BROKER_HOST, BROKER1_PORT, advert_b))
+
+        r = requests.delete(
+            f"{base_url}/ngsi-ld/v1/entities/{quote(id_a, safe='')}"
+            f"?broker={BROKER_HOST}&port={BROKER1_PORT}&hlink={PRIMARY_CONTEXT}&my_area={AREA}",
+            timeout=15,
+        )
+        self.assertEqual(200, r.status_code)
+        self.assertFalse(self.mqtt_topic_exists(BROKER_HOST, BROKER1_PORT, advert_a), "A's own advertisement must be gone")
+        self.assertTrue(self.mqtt_topic_exists(BROKER_HOST, BROKER1_PORT, advert_b), "B's advertisement is independent and must remain")
+
+    # ------------------------------------------------------------------
+    # One-shot endpoint (WS /ngsi-ld/v1/subscriptions/ws) create-or-resume
+    # lifecycle regression tests (test_34+).
+    #
+    # Regression for: a WebSocket disconnect (timeout, network blip, client
+    # restart) used to call stop_subscription() directly, tearing down the
+    # logical subscription and every provider child process along with the
+    # transport. Under sustained backlog this meant a transient WS timeout
+    # destroyed 40 live provider connections. Disconnect must now only mark
+    # the subscription idle; only explicit DELETE or reaper expiry removes it.
+    # ------------------------------------------------------------------
+
+    async def _providers_for(self, sub_id, timeout=8.0):
+        deadline = time.monotonic() + timeout
+        providers = []
+        while time.monotonic() < deadline:
+            providers = self.request_json("GET", f"/ngsi-ld/v1/subscriptions/{quote(sub_id, safe='')}/providers")
+            if providers:
+                return providers
+            await asyncio.sleep(0.25)
+        return providers
+
+    def test_34_one_shot_first_connection_creates_subscription_and_providers(self):
+        asyncio.run(self._one_shot_first_connection_creates_subscription_and_providers())
+
+    async def _one_shot_first_connection_creates_subscription_and_providers(self):
+        entity_type = self.unique("ComdexOneShotFirst")
+        entity_id = f"urn:ngsi-ld:{entity_type}:001"
+        self.addCleanup(self.delete_entity_best_effort, entity_id, BROKER2_PORT)
+
+        uri = f"{WS_BASE_URL}/ngsi-ld/v1/subscriptions/ws"
+        async with websockets.connect(uri) as ws:
+            await ws.send(json.dumps({
+                "id": f"urn:subscription:{entity_type}", "type": "Subscription",
+                "entities": [{"type": entity_type}], "@context": CONTEXT,
+                "broker": BROKER_HOST, "port": BROKER2_PORT, "qos": QOS,
+            }))
+            _, subscribed = await self.recv_json(ws, timeout=5)
+            self.assertEqual("subscribed", subscribed["status"])
+            sub_id = subscribed["id"]
+            self.addCleanup(self.delete_subscription_best_effort, sub_id)
+
+            self.post_entity(self.entity_payload(entity_type, entity_id), BROKER2_PORT)
+            _, msg = await self.wait_for_entity_message(ws, entity_id, timeout=8)
+            self.assertEqual(entity_id, msg["id"])
+
+            providers = await self._providers_for(sub_id)
+            self.assertTrue(providers, "Provider child process must be created on first connection")
+
+        subs = self.request_json("GET", "/ngsi-ld/v1/subscriptions")
+        self.assertIn(sub_id, {s["id"] for s in subs})
+
+    def test_35_one_shot_temporary_disconnect_keeps_subscription_and_providers_alive(self):
+        asyncio.run(self._one_shot_temporary_disconnect_keeps_subscription_and_providers_alive())
+
+    async def _one_shot_temporary_disconnect_keeps_subscription_and_providers_alive(self):
+        entity_type = self.unique("ComdexOneShotIdle")
+        entity_id = f"urn:ngsi-ld:{entity_type}:001"
+        self.addCleanup(self.delete_entity_best_effort, entity_id, BROKER2_PORT)
+
+        uri = f"{WS_BASE_URL}/ngsi-ld/v1/subscriptions/ws"
+        sub_id = None
+        async with websockets.connect(uri) as ws:
+            await ws.send(json.dumps({
+                "id": f"urn:subscription:{entity_type}", "type": "Subscription",
+                "entities": [{"type": entity_type}], "@context": CONTEXT,
+                "broker": BROKER_HOST, "port": BROKER2_PORT, "qos": QOS,
+            }))
+            _, subscribed = await self.recv_json(ws, timeout=5)
+            sub_id = subscribed["id"]
+            self.addCleanup(self.delete_subscription_best_effort, sub_id)
+            self.post_entity(self.entity_payload(entity_type, entity_id), BROKER2_PORT)
+            await self.wait_for_entity_message(ws, entity_id, timeout=8)
+            providers_before = await self._providers_for(sub_id)
+            self.assertTrue(providers_before)
+        # WS closed here — must be treated as idle, not deleted.
+
+        await asyncio.sleep(1.0)
+        subs = self.request_json("GET", "/ngsi-ld/v1/subscriptions")
+        self.assertIn(sub_id, {s["id"] for s in subs},
+                     "Temporary WS disconnect must not delete the subscription (stop_subscription must not run)")
+        providers_after = self.request_json("GET", f"/ngsi-ld/v1/subscriptions/{quote(sub_id, safe='')}/providers")
+        self.assertTrue(providers_after, "Provider child processes must still be registered after disconnect")
+        self.assertTrue(all(p["alive_process_count"] > 0 for p in providers_after),
+                        "Provider child processes must still be alive after a temporary disconnect")
+
+    def test_36_one_shot_reconnect_resumes_same_subscription_no_duplicates(self):
+        asyncio.run(self._one_shot_reconnect_resumes_same_subscription_no_duplicates())
+
+    async def _one_shot_reconnect_resumes_same_subscription_no_duplicates(self):
+        entity_type = self.unique("ComdexOneShotReconnect")
+        entity_id_1 = f"urn:ngsi-ld:{entity_type}:001"
+        entity_id_2 = f"urn:ngsi-ld:{entity_type}:002"
+        self.addCleanup(self.delete_entity_best_effort, entity_id_1, BROKER2_PORT)
+        self.addCleanup(self.delete_entity_best_effort, entity_id_2, BROKER2_PORT)
+
+        uri = f"{WS_BASE_URL}/ngsi-ld/v1/subscriptions/ws"
+        request = {
+            "id": f"urn:subscription:{entity_type}", "type": "Subscription",
+            "entities": [{"type": entity_type}], "@context": CONTEXT,
+            "broker": BROKER_HOST, "port": BROKER2_PORT, "qos": QOS,
+        }
+
+        ws1 = await websockets.connect(uri)
+        await ws1.send(json.dumps(request))
+        _, subscribed = await self.recv_json(ws1, timeout=5)
+        sub_id = subscribed["id"]
+        self.addCleanup(self.delete_subscription_best_effort, sub_id)
+        self.post_entity(self.entity_payload(entity_type, entity_id_1), BROKER2_PORT)
+        await self.wait_for_entity_message(ws1, entity_id_1, timeout=8)
+        providers_before = await self._providers_for(sub_id)
+        pids_before = sorted(sum((p["process_ids"] for p in providers_before), []))
+        self.assertTrue(pids_before)
+        await ws1.close()
+        await asyncio.sleep(0.5)
+
+        async with websockets.connect(uri) as ws2:
+            await ws2.send(json.dumps(request))
+            _, subscribed2 = await self.recv_json(ws2, timeout=5)
+            self.assertEqual("subscribed", subscribed2["status"])
+            self.assertEqual(sub_id, subscribed2["id"], "Reconnect must resume the same subscription id")
+
+            providers_after = self.request_json("GET", f"/ngsi-ld/v1/subscriptions/{quote(sub_id, safe='')}/providers")
+            pids_after = sorted(sum((p["process_ids"] for p in providers_after), []))
+            self.assertEqual(pids_before, pids_after, "Reconnect must reuse the existing provider child processes, not spawn duplicates")
+
+            self.post_entity(self.entity_payload(entity_type, entity_id_2), BROKER2_PORT)
+            _, msg = await self.wait_for_entity_message(ws2, entity_id_2, timeout=8)
+            self.assertEqual(entity_id_2, msg["id"], "Notification stream must resume after reconnect")
+
+    def test_37_one_shot_data_during_disconnect_remains_available_on_reconnect(self):
+        asyncio.run(self._one_shot_data_during_disconnect_remains_available_on_reconnect())
+
+    async def _one_shot_data_during_disconnect_remains_available_on_reconnect(self):
+        entity_type = self.unique("ComdexOneShotQueued")
+        entity_id_1 = f"urn:ngsi-ld:{entity_type}:001"
+        entity_id_2 = f"urn:ngsi-ld:{entity_type}:002"
+        self.addCleanup(self.delete_entity_best_effort, entity_id_1, BROKER2_PORT)
+        self.addCleanup(self.delete_entity_best_effort, entity_id_2, BROKER2_PORT)
+
+        uri = f"{WS_BASE_URL}/ngsi-ld/v1/subscriptions/ws"
+        request = {
+            "id": f"urn:subscription:{entity_type}", "type": "Subscription",
+            "entities": [{"type": entity_type}], "@context": CONTEXT,
+            "broker": BROKER_HOST, "port": BROKER2_PORT, "qos": QOS,
+        }
+
+        ws1 = await websockets.connect(uri)
+        await ws1.send(json.dumps(request))
+        _, subscribed = await self.recv_json(ws1, timeout=5)
+        sub_id = subscribed["id"]
+        self.addCleanup(self.delete_subscription_best_effort, sub_id)
+        self.post_entity(self.entity_payload(entity_type, entity_id_1), BROKER2_PORT)
+        await self.wait_for_entity_message(ws1, entity_id_1, timeout=8)
+        await self._providers_for(sub_id)
+        await ws1.close()
+
+        # Publish while nobody is connected — the provider chain and queue
+        # must still be alive to capture this.
+        self.post_entity(self.entity_payload(entity_type, entity_id_2), BROKER2_PORT)
+        await asyncio.sleep(1.0)
+
+        async with websockets.connect(uri) as ws2:
+            await ws2.send(json.dumps(request))
+            _, subscribed2 = await self.recv_json(ws2, timeout=5)
+            self.assertEqual(sub_id, subscribed2["id"])
+            _, msg = await self.wait_for_entity_message(ws2, entity_id_2, timeout=8)
+            self.assertEqual(entity_id_2, msg["id"],
+                             "Data published while disconnected must still reach the reconnected client")
+
+    def test_38_one_shot_grace_expiry_reaps_subscription_and_providers(self):
+        asyncio.run(self._one_shot_grace_expiry_reaps_subscription_and_providers())
+
+    async def _one_shot_grace_expiry_reaps_subscription_and_providers(self):
+        grace_seconds = 3
+        port = 8012
+        env = dict(os.environ)
+        env["COMDEX_SUBSCRIPTION_IDLE_GRACE_SECONDS"] = str(grace_seconds)
+        env["COMDEX_SUBSCRIPTION_REAPER_POLL_SECONDS"] = "1"
+        root = Path(__file__).resolve().parents[1]
+        proc = subprocess.Popen(
+            [sys.executable, "-m", "uvicorn", "actionhandlerAPI:app", "--host", "127.0.0.1", "--port", str(port)],
+            cwd=root, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        self.addCleanup(self._terminate_process, proc)
+        base_url = f"http://127.0.0.1:{port}"
+        ws_base = base_url.replace("http://", "ws://")
+        self.assertTrue(wait_for_api(timeout=15.0, base_url=base_url))
+
+        entity_type = self.unique("ComdexOneShotGraceExpiry")
+        uri = f"{ws_base}/ngsi-ld/v1/subscriptions/ws"
+        ws = await websockets.connect(uri)
+        await ws.send(json.dumps({
+            "id": f"urn:subscription:{entity_type}", "type": "Subscription",
+            "entities": [{"type": entity_type}], "@context": CONTEXT,
+            "broker": BROKER_HOST, "port": BROKER2_PORT, "qos": QOS,
+        }))
+        ack = json.loads(await asyncio.wait_for(ws.recv(), 10))
+        sub_id = ack["id"]
+        self.addCleanup(self.delete_subscription_best_effort, sub_id)
+        await ws.close()
+
+        deadline = time.monotonic() + grace_seconds * 4
+        gone = False
+        while time.monotonic() < deadline:
+            r = requests.get(f"{base_url}/ngsi-ld/v1/subscriptions/{sub_id}", timeout=5)
+            if r.status_code == 404:
+                gone = True
+                break
+            await asyncio.sleep(0.3)
+        self.assertTrue(gone, "Reaper must reclaim a one-shot subscription nobody reconnects to within the grace period")
+
+    def test_39_one_shot_explicit_delete_removes_subscription_and_children(self):
+        asyncio.run(self._one_shot_explicit_delete_removes_subscription_and_children())
+
+    async def _one_shot_explicit_delete_removes_subscription_and_children(self):
+        entity_type = self.unique("ComdexOneShotExplicitDelete")
+        entity_id = f"urn:ngsi-ld:{entity_type}:001"
+        self.addCleanup(self.delete_entity_best_effort, entity_id, BROKER2_PORT)
+
+        uri = f"{WS_BASE_URL}/ngsi-ld/v1/subscriptions/ws"
+        async with websockets.connect(uri) as ws:
+            await ws.send(json.dumps({
+                "id": f"urn:subscription:{entity_type}", "type": "Subscription",
+                "entities": [{"type": entity_type}], "@context": CONTEXT,
+                "broker": BROKER_HOST, "port": BROKER2_PORT, "qos": QOS,
+            }))
+            _, subscribed = await self.recv_json(ws, timeout=5)
+            sub_id = subscribed["id"]
+            self.post_entity(self.entity_payload(entity_type, entity_id), BROKER2_PORT)
+            await self.wait_for_entity_message(ws, entity_id, timeout=8)
+            await self._providers_for(sub_id)
+
+        self.request_json("DELETE", f"/ngsi-ld/v1/subscriptions/{quote(sub_id, safe='')}")
+        self.request_json("GET", f"/ngsi-ld/v1/subscriptions/{quote(sub_id, safe='')}", expected_status=404)
+        self.request_json("GET", f"/ngsi-ld/v1/subscriptions/{quote(sub_id, safe='')}/providers", expected_status=404)
+
+    def test_40_one_shot_duplicate_active_connection_rejected(self):
+        asyncio.run(self._one_shot_duplicate_active_connection_rejected())
+
+    async def _one_shot_duplicate_active_connection_rejected(self):
+        entity_type = self.unique("ComdexOneShotDuplicate")
+        entity_id_1 = f"urn:ngsi-ld:{entity_type}:001"
+        entity_id_2 = f"urn:ngsi-ld:{entity_type}:002"
+        self.addCleanup(self.delete_entity_best_effort, entity_id_1, BROKER2_PORT)
+        self.addCleanup(self.delete_entity_best_effort, entity_id_2, BROKER2_PORT)
+
+        uri = f"{WS_BASE_URL}/ngsi-ld/v1/subscriptions/ws"
+        request = {
+            "id": f"urn:subscription:{entity_type}", "type": "Subscription",
+            "entities": [{"type": entity_type}], "@context": CONTEXT,
+            "broker": BROKER_HOST, "port": BROKER2_PORT, "qos": QOS,
+        }
+
+        async with websockets.connect(uri) as ws1:
+            await ws1.send(json.dumps(request))
+            _, subscribed = await self.recv_json(ws1, timeout=5)
+            sub_id = subscribed["id"]
+            self.addCleanup(self.delete_subscription_best_effort, sub_id)
+
+            async with websockets.connect(uri) as ws2:
+                await ws2.send(json.dumps(request))
+                rejected = False
+                try:
+                    _, msg = await self.recv_json(ws2, timeout=5)
+                    if "error" in msg:
+                        rejected = True
+                except (websockets.exceptions.ConnectionClosed, asyncio.TimeoutError):
+                    rejected = True
+                self.assertTrue(rejected, "A second one-shot WS on an already-connected subscription must be rejected")
+
+            # Original connection must still work after the rejected second attempt.
+            self.post_entity(self.entity_payload(entity_type, entity_id_1), BROKER2_PORT)
+            _, msg = await self.wait_for_entity_message(ws1, entity_id_1, timeout=8)
+            self.assertEqual(entity_id_1, msg["id"], "Original connection must be unaffected by the rejected duplicate")
+
+    def test_41_one_shot_id_collision_with_different_params_rejected(self):
+        asyncio.run(self._one_shot_id_collision_with_different_params_rejected())
+
+    async def _one_shot_id_collision_with_different_params_rejected(self):
+        entity_type_a = self.unique("ComdexOneShotCollideA")
+        entity_type_b = self.unique("ComdexOneShotCollideB")
+        entity_id = f"urn:ngsi-ld:{entity_type_a}:001"
+        self.addCleanup(self.delete_entity_best_effort, entity_id, BROKER2_PORT)
+        sub_id = f"urn:subscription:{self.unique('ComdexOneShotCollide')}"
+        self.addCleanup(self.delete_subscription_best_effort, sub_id)
+
+        uri = f"{WS_BASE_URL}/ngsi-ld/v1/subscriptions/ws"
+        ws1 = await websockets.connect(uri)
+        await ws1.send(json.dumps({
+            "id": sub_id, "type": "Subscription",
+            "entities": [{"type": entity_type_a}], "@context": CONTEXT,
+            "broker": BROKER_HOST, "port": BROKER2_PORT, "qos": QOS,
+        }))
+        _, subscribed = await self.recv_json(ws1, timeout=5)
+        self.assertEqual(sub_id, subscribed["id"])
+        await ws1.close()
+        await asyncio.sleep(0.5)
+
+        async with websockets.connect(uri) as ws2:
+            await ws2.send(json.dumps({
+                "id": sub_id, "type": "Subscription",
+                "entities": [{"type": entity_type_b}], "@context": CONTEXT,
+                "broker": BROKER_HOST, "port": BROKER2_PORT, "qos": QOS,
+            }))
+            rejected = False
+            try:
+                _, msg = await self.recv_json(ws2, timeout=5)
+                if "error" in msg:
+                    rejected = True
+            except (websockets.exceptions.ConnectionClosed, asyncio.TimeoutError):
+                rejected = True
+            self.assertTrue(rejected, "Reconnect with different filter params for an existing id must be rejected")
+
+        fetched = self.request_json("GET", f"/ngsi-ld/v1/subscriptions/{quote(sub_id, safe='')}")
+        self.assertEqual(entity_type_a, fetched["type"], "Existing subscription must remain unchanged after a rejected id collision")
+
+    # ------------------------------------------------------------------
+    # Malformed-payload resilience (test_42+).
+    #
+    # Regression for: _parse_payload() let json.JSONDecodeError/ValueError/
+    # SyntaxError/UnicodeDecodeError escape, and subscribe().on_message()
+    # called recreate_single_entity() unprotected - one malformed retained
+    # MQTT message (bad JSON/literal, invalid UTF-8, or an unexpected
+    # nested shape) could raise out of the MQTT callback and crash/kill the
+    # provider subscription's child process. See actionhandler.py
+    # PayloadParseError, _parse_payload(), recreate_single_entity() and
+    # subscribe().on_message() for the fix.
+    # ------------------------------------------------------------------
+
+    def publish_raw(self, broker, port, topic, payload, retain=True, qos=1):
+        client = mqtt.Client()
+        client.connect(broker, port)
+        client.loop_start()
+        info = client.publish(topic, payload, qos=qos, retain=retain)
+        info.wait_for_publish(10)
+        client.loop_stop()
+        client.disconnect()
+
+    def attribute_topic(self, area, context, entity_type, entity_id, attr):
+        hlink = context.replace("/", "§")
+        return f"{area}/entities/{hlink}/{entity_type}/LNA/{entity_id}/{attr}"
+
+    async def _wait_for_provider_pid(self, subscription_id, timeout=8.0):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            providers = self.request_json("GET", f"/ngsi-ld/v1/subscriptions/{quote(subscription_id, safe='')}/providers")
+            pids = sorted(pid for p in providers for pid in p.get("process_ids", []) if pid is not None)
+            if pids:
+                return pids
+            await asyncio.sleep(0.25)
+        return []
+
+    def test_42_malformed_payload_skipped_valid_messages_before_and_after_survive(self):
+        asyncio.run(self._malformed_payload_skipped_valid_messages_before_and_after_survive())
+
+    async def _malformed_payload_skipped_valid_messages_before_and_after_survive(self):
+        """The most important regression: BAD then VALID must not affect the
+        provider subscription's child process - same PID, no reconnect."""
+        entity_type = self.unique("ComdexMalformed")
+        entity_id = f"urn:ngsi-ld:{entity_type}:001"
+        subscription_id = f"urn:subscription:{entity_type}"
+        self.addCleanup(self.delete_entity_best_effort, entity_id, BROKER2_PORT)
+        self.addCleanup(self.delete_subscription_best_effort, subscription_id)
+
+        self.request_json(
+            "POST",
+            f"/ngsi-ld/v1/subscriptions?broker={BROKER_HOST}&port={BROKER2_PORT}&qos={QOS}&my_area={AREA}",
+            expected_status=201,
+            json={"id": subscription_id, "type": "Subscription", "entities": [{"type": entity_type}], "@context": CONTEXT},
+        )
+
+        uri = f"{WS_BASE_URL}/ngsi-ld/v1/subscriptions/{quote(subscription_id, safe='')}/ws"
+        async with websockets.connect(uri) as ws:
+            await self.recv_json(ws, timeout=3)
+
+            # Valid entity #1: establishes the provider child process.
+            self.post_entity(self.entity_payload(entity_type, entity_id), BROKER2_PORT)
+            _, msg = await self.wait_for_entity_message(ws, entity_id, timeout=8)
+            self.assertEqual(entity_id, msg["id"])
+
+            pids_before = await self._wait_for_provider_pid(subscription_id)
+            self.assertTrue(pids_before, "No provider child process was registered before the malformed publish")
+
+            # BAD: neither valid JSON nor a valid Python literal.
+            self.publish_raw(BROKER_HOST, BROKER2_PORT,
+                             self.attribute_topic(AREA, PRIMARY_CONTEXT, entity_type, entity_id, "badAttr"),
+                             b'{this is neither json nor a python literal ]]')
+            await asyncio.sleep(1.5)
+
+            providers_after_bad = self.request_json("GET", f"/ngsi-ld/v1/subscriptions/{quote(subscription_id, safe='')}/providers")
+            pids_after_bad = sorted(pid for p in providers_after_bad for pid in p.get("process_ids", []) if pid is not None)
+            self.assertEqual(pids_before, pids_after_bad,
+                             "Provider child process must survive a malformed payload with the SAME PID - no crash, no restart")
+            self.assertTrue(all(p["alive_process_count"] > 0 for p in providers_after_bad),
+                            "Provider child process must still be alive after the malformed payload")
+
+            # VALID: a second entity must still be delivered normally on the
+            # same connection, through the same still-alive child process.
+            entity_id_2 = f"urn:ngsi-ld:{entity_type}:002"
+            self.addCleanup(self.delete_entity_best_effort, entity_id_2, BROKER2_PORT)
+            self.post_entity(self.entity_payload(entity_type, entity_id_2), BROKER2_PORT)
+            _, msg2 = await self.wait_for_entity_message(ws, entity_id_2, timeout=8)
+            self.assertEqual(entity_id_2, msg2["id"], "A valid message published after a malformed one must still be delivered")
+
+            pids_final = self.request_json("GET", f"/ngsi-ld/v1/subscriptions/{quote(subscription_id, safe='')}/providers")
+            pids_final = sorted(pid for p in pids_final for pid in p.get("process_ids", []) if pid is not None)
+            self.assertEqual(pids_before, pids_final, "PID must still be identical after processing the valid follow-up message")
+
+    def test_43_malformed_payload_on_one_provider_does_not_affect_another(self):
+        asyncio.run(self._malformed_payload_on_one_provider_does_not_affect_another())
+
+    async def _malformed_payload_on_one_provider_does_not_affect_another(self):
+        type_a = self.unique("ComdexMalformedA")
+        type_b = self.unique("ComdexMalformedB")
+        id_a = f"urn:ngsi-ld:{type_a}:001"
+        id_b = f"urn:ngsi-ld:{type_b}:001"
+        sub_a = f"urn:subscription:{type_a}"
+        sub_b = f"urn:subscription:{type_b}"
+        self.addCleanup(self.delete_entity_best_effort, id_a, BROKER1_PORT)
+        self.addCleanup(self.delete_entity_best_effort, id_b, BROKER2_PORT)
+        self.addCleanup(self.delete_subscription_best_effort, sub_a)
+        self.addCleanup(self.delete_subscription_best_effort, sub_b)
+
+        for sub_id, port in ((sub_a, BROKER1_PORT), (sub_b, BROKER2_PORT)):
+            self.request_json(
+                "POST",
+                f"/ngsi-ld/v1/subscriptions?broker={BROKER_HOST}&port={port}&qos={QOS}&my_area={AREA}",
+                expected_status=201,
+                json={"id": sub_id, "type": "Subscription",
+                     "entities": [{"type": type_a if sub_id == sub_a else type_b}], "@context": CONTEXT},
+            )
+
+        uri_a = f"{WS_BASE_URL}/ngsi-ld/v1/subscriptions/{quote(sub_a, safe='')}/ws"
+        uri_b = f"{WS_BASE_URL}/ngsi-ld/v1/subscriptions/{quote(sub_b, safe='')}/ws"
+        async with websockets.connect(uri_a) as ws_a, websockets.connect(uri_b) as ws_b:
+            await self.recv_json(ws_a, timeout=3)
+            await self.recv_json(ws_b, timeout=3)
+
+            self.post_entity(self.entity_payload(type_a, id_a), BROKER1_PORT)
+            await self.wait_for_entity_message(ws_a, id_a, timeout=8)
+            self.post_entity(self.entity_payload(type_b, id_b), BROKER2_PORT)
+            await self.wait_for_entity_message(ws_b, id_b, timeout=8)
+
+            pids_b_before = await self._wait_for_provider_pid(sub_b)
+            self.assertTrue(pids_b_before)
+
+            # Malformed publish ONLY on provider A's broker/topic.
+            self.publish_raw(BROKER_HOST, BROKER1_PORT,
+                             self.attribute_topic(AREA, PRIMARY_CONTEXT, type_a, id_a, "badAttr"),
+                             b'not json { not python either [[[')
+            await asyncio.sleep(1.5)
+
+            pids_b_after = self.request_json("GET", f"/ngsi-ld/v1/subscriptions/{quote(sub_b, safe='')}/providers")
+            pids_b_after = sorted(pid for p in pids_b_after for pid in p.get("process_ids", []) if pid is not None)
+            self.assertEqual(pids_b_before, pids_b_after, "Provider B's child process must be unaffected by provider A's malformed message")
+
+            id_b_2 = f"urn:ngsi-ld:{type_b}:002"
+            self.addCleanup(self.delete_entity_best_effort, id_b_2, BROKER2_PORT)
+            self.post_entity(self.entity_payload(type_b, id_b_2), BROKER2_PORT)
+            _, msg = await self.wait_for_entity_message(ws_b, id_b_2, timeout=8)
+            self.assertEqual(id_b_2, msg["id"], "Provider B must keep delivering data unaffected by provider A's malformed message")
+
+    def test_44_invalid_utf8_bytes_rejected_worker_survives(self):
+        asyncio.run(self._invalid_utf8_bytes_rejected_worker_survives())
+
+    async def _invalid_utf8_bytes_rejected_worker_survives(self):
+        entity_type = self.unique("ComdexBadUtf8")
+        entity_id = f"urn:ngsi-ld:{entity_type}:001"
+        subscription_id = f"urn:subscription:{entity_type}"
+        self.addCleanup(self.delete_entity_best_effort, entity_id, BROKER2_PORT)
+        self.addCleanup(self.delete_subscription_best_effort, subscription_id)
+
+        self.request_json(
+            "POST",
+            f"/ngsi-ld/v1/subscriptions?broker={BROKER_HOST}&port={BROKER2_PORT}&qos={QOS}&my_area={AREA}",
+            expected_status=201,
+            json={"id": subscription_id, "type": "Subscription", "entities": [{"type": entity_type}], "@context": CONTEXT},
+        )
+
+        uri = f"{WS_BASE_URL}/ngsi-ld/v1/subscriptions/{quote(subscription_id, safe='')}/ws"
+        async with websockets.connect(uri) as ws:
+            await self.recv_json(ws, timeout=3)
+            self.post_entity(self.entity_payload(entity_type, entity_id), BROKER2_PORT)
+            await self.wait_for_entity_message(ws, entity_id, timeout=8)
+            pids_before = await self._wait_for_provider_pid(subscription_id)
+            self.assertTrue(pids_before)
+
+            # Invalid UTF-8 byte sequence - must be rejected during decode,
+            # not crash the callback.
+            self.publish_raw(BROKER_HOST, BROKER2_PORT,
+                             self.attribute_topic(AREA, PRIMARY_CONTEXT, entity_type, entity_id, "badUtf8Attr"),
+                             b'\xff\xfe\x00\x01garbage-not-utf8')
+            await asyncio.sleep(1.5)
+
+            providers = self.request_json("GET", f"/ngsi-ld/v1/subscriptions/{quote(subscription_id, safe='')}/providers")
+            pids_after = sorted(pid for p in providers for pid in p.get("process_ids", []) if pid is not None)
+            self.assertEqual(pids_before, pids_after, "Invalid UTF-8 payload must not kill the provider child process")
+
+            entity_id_2 = f"urn:ngsi-ld:{entity_type}:002"
+            self.addCleanup(self.delete_entity_best_effort, entity_id_2, BROKER2_PORT)
+            self.post_entity(self.entity_payload(entity_type, entity_id_2), BROKER2_PORT)
+            _, msg = await self.wait_for_entity_message(ws, entity_id_2, timeout=8)
+            self.assertEqual(entity_id_2, msg["id"], "Valid message after invalid UTF-8 payload must still be delivered")
 
 
 if __name__ == "__main__":
