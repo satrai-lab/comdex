@@ -1371,6 +1371,54 @@ class ComdexApiIntegrationTests(unittest.TestCase):
         self.assertFalse(self.mqtt_topic_exists(BROKER_HOST, BROKER1_PORT, advert_a), "A's own advertisement must be gone")
         self.assertTrue(self.mqtt_topic_exists(BROKER_HOST, BROKER1_PORT, advert_b), "B's advertisement is independent and must remain")
 
+    def test_33b_delete_discovery_waits_for_suback_not_a_fixed_idle_timer(self):
+        """Regression for the CI race: the old code started the retained-
+        message idle timer immediately after calling client.subscribe(),
+        before the broker's SUBACK confirmed the subscription was active.
+        On a slow/loaded runner the idle window could elapse before the
+        SUBACK (and the retained redelivery it unlocks) ever arrived,
+        so discovery concluded "nothing found" and skipped a real entity.
+
+        This proves the fix directly: with the SUBACK->on_subscribe signal
+        deliberately delayed well past the idle timeout, discovery must
+        still find the retained topic, because the idle timer is only
+        allowed to start counting once the (delayed) SUBACK is observed.
+        """
+        root = Path(__file__).resolve().parents[1]
+        sys.path.insert(0, str(root))
+        import actionhandler as ah
+
+        entity_type = self.unique("ComdexSubackRace")
+        entity_id = f"urn:ngsi-ld:{entity_type}:001"
+        self.addCleanup(self.delete_entity_best_effort, entity_id, BROKER1_PORT)
+        self.post_entity(self.entity_payload(entity_type, entity_id), BROKER1_PORT)
+
+        session = ah._DeleteDiscoverySession(BROKER_HOST, BROKER1_PORT)
+        self.addCleanup(session.close)
+
+        # Delay the SIGNAL our own code sees for SUBACK well past the idle
+        # timeout, regardless of how fast the local broker actually acks -
+        # this simulates the CI-runner scheduling delay that caused the race.
+        real_on_subscribe = session._on_subscribe
+        suback_delay = ah.DELETE_DISCOVERY_IDLE_SECONDS + 1.5
+
+        def delayed_on_subscribe(client, userdata, mid, granted_qos, properties=None):
+            time.sleep(suback_delay)
+            real_on_subscribe(client, userdata, mid, granted_qos, properties)
+
+        session._client.on_subscribe = delayed_on_subscribe
+
+        hlink = PRIMARY_CONTEXT.replace("/", "§")
+        topic_filter = f"{AREA}/entities/{hlink}/+/+/{entity_id}/#"
+        found = session.collect([topic_filter], max_wait=suback_delay + 5.0)
+
+        self.assertTrue(
+            any(entity_id in t for t in found),
+            "Discovery must wait for the (delayed) SUBACK before starting its idle "
+            "timer, not conclude 'nothing found' while the subscription was not "
+            "yet confirmed active",
+        )
+
     # ------------------------------------------------------------------
     # One-shot endpoint (WS /ngsi-ld/v1/subscriptions/ws) create-or-resume
     # lifecycle regression tests (test_34+).

@@ -125,7 +125,9 @@ class _DeleteDiscoverySession:
         self._client = mqtt.Client(clean_session=True)
         self._results = []
         self._lock = threading.Lock()
+        self._subscribe_events = {}
         self._client.on_message = self._on_message
+        self._client.on_subscribe = self._on_subscribe
         self._client.connect(broker, port)
         self._client.loop_start()
         _wait_until_connected(self._client)
@@ -135,16 +137,58 @@ class _DeleteDiscoverySession:
             with self._lock:
                 self._results.append(msg.topic)
 
+    def _on_subscribe(self, client, userdata, mid, granted_qos, properties=None):
+        # Runs on the network loop thread whenever a SUBACK arrives; may
+        # fire for a mid nobody is waiting on (already timed out and
+        # cleaned up), which is fine - .get() just finds nothing.
+        with self._lock:
+            event = self._subscribe_events.get(mid)
+        if event is not None:
+            event.set()
+
+    def _subscribe_and_wait_for_suback(self, topics, timeout):
+        """Send one SUBSCRIBE packet covering every filter in `topics` and
+        block until the broker's matching SUBACK is actually received (or
+        `timeout` elapses). The retained-message idle timer in collect()
+        must never start before this returns - subscribing and then
+        immediately timing an "idle" gap races the broker's own ack/
+        retained-redelivery latency, which is exactly the bug this closes."""
+        event = threading.Event()
+        with self._lock:
+            result, mid = self._client.subscribe([(t, 1) for t in topics])
+            if result != mqtt.MQTT_ERR_SUCCESS:
+                raise RuntimeError(
+                    f"Delete discovery: MQTT subscribe failed (rc={result}) for "
+                    f"{len(topics)} topic filter(s)"
+                )
+            self._subscribe_events[mid] = event
+        try:
+            if not event.wait(timeout):
+                raise RuntimeError(
+                    f"Delete discovery: SUBACK not received within {timeout}s for "
+                    f"{len(topics)} topic filter(s) (mid={mid}) - aborting discovery "
+                    f"instead of racing the idle timer against an unconfirmed subscribe"
+                )
+        finally:
+            with self._lock:
+                self._subscribe_events.pop(mid, None)
+
     def collect(self, topics, idle_timeout=DELETE_DISCOVERY_IDLE_SECONDS,
                 max_wait=DELETE_DISCOVERY_MAX_WAIT_SECONDS):
         """Subscribe to every topic filter in `topics` in one SUBSCRIBE
-        packet, collect whatever retained messages come back, and return
-        once nothing new has arrived for `idle_timeout` seconds (or
-        `max_wait` is hit, whichever first)."""
+        packet, wait for the broker to confirm the subscription (SUBACK),
+        then collect whatever retained messages come back and return once
+        nothing new has arrived for `idle_timeout` seconds since the
+        subscription went active (or `max_wait` since SUBACK, whichever
+        first)."""
         with self._lock:
             self._results = []
         if topics:
-            self._client.subscribe([(t, 1) for t in topics])
+            self._subscribe_and_wait_for_suback(topics, max_wait)
+        # The idle timer starts here - only after the subscription is
+        # confirmed active, not from whenever subscribe() happened to be
+        # called - so a slow/loaded broker or CI runner can't make
+        # discovery conclude "nothing found" before it was ever listening.
         start = time.perf_counter()
         last_growth = start
         seen = 0
