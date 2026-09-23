@@ -56,6 +56,23 @@ jobs:
       - name: Run integration unittest suite
         run: python -m unittest discover -s tests -p "test_*.py" -v
 
+      - name: Show ComDeX API server logs on failure
+        if: failure()
+        run: |
+          for f in test-logs/*.log; do
+            echo "::group::$f"
+            cat "$f"
+            echo "::endgroup::"
+          done
+
+      - name: Upload ComDeX API server logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: comdex-api-logs
+          path: test-logs/
+          if-no-files-found: ignore
+
       - name: Show broker logs on failure
         if: failure()
         run: docker compose logs

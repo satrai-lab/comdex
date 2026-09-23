@@ -1214,6 +1214,8 @@ Environment variables that tune runtime behavior without changing code:
 | Variable | Default | Meaning |
 |---|---|---|
 | `COMDEX_WS_HEARTBEAT_IDLE_SECONDS` | `30` | Seconds of WebSocket inactivity before ComDeX sends a heartbeat/ping. |
+| `COMDEX_MULTIPROCESSING_START_METHOD` | `spawn` | How provider child processes are started. Pinned so behavior is identical on Linux and Windows instead of defaulting to `fork` on Linux, which copies a parent that already has uvicorn, MQTT and queue threads running. Set to `fork` only if you have measured a reason to. |
+| `COMDEX_DELETE_VERIFY_ATTEMPTS` | `3` | How many discover/clear/verify rounds a delete may take. A delete only reports success once a verification pass finds no retained topics left. |
 
 ## Local Cross-Broker Test
 

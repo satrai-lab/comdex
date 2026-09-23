@@ -16,6 +16,7 @@ import urllib.parse
 import urllib.error
 import threading
 import multiprocessing
+import uuid
 import pprint
 import re
 import ast
@@ -107,11 +108,46 @@ publisher_pool = PublisherClientPool()
 # done - not once per entity.
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Multiprocessing start method
+#
+# Provider child processes are started from a parent that is already running
+# uvicorn's event loop, paho network-loop threads and multiprocessing queue
+# feeder threads. Python's default differs by platform - "spawn" on Windows,
+# "fork" on Linux - so the same code gets meaningfully different behavior:
+# fork copies that threaded parent's memory, including locks that were held
+# by threads which do not exist in the child, while spawn starts clean.
+# Pinning it makes behavior identical on every platform instead of
+# accidentally platform-dependent; spawn is the safe default.
+# ---------------------------------------------------------------------------
+
+MULTIPROCESSING_START_METHOD = os.getenv("COMDEX_MULTIPROCESSING_START_METHOD", "spawn").strip().lower()
+_mp_context = None
+_mp_context_lock = threading.Lock()
+
+
+def get_mp_context():
+    """The multiprocessing context used for every provider child process and
+    notification queue. Falls back to the platform default if the requested
+    start method is unavailable (e.g. "fork" on Windows)."""
+    global _mp_context
+    with _mp_context_lock:
+        if _mp_context is None:
+            try:
+                _mp_context = multiprocessing.get_context(MULTIPROCESSING_START_METHOD)
+            except ValueError:
+                print(f"Multiprocessing start method {MULTIPROCESSING_START_METHOD!r} is not "
+                      f"available on this platform; using the default instead")
+                _mp_context = multiprocessing.get_context()
+        return _mp_context
+
+
 DELETE_DISCOVERY_CHUNK_SIZE = int(os.getenv("COMDEX_DELETE_DISCOVERY_CHUNK_SIZE", "200"))
 DELETE_MAX_INFLIGHT = int(os.getenv("COMDEX_DELETE_MAX_INFLIGHT", "50"))
 DELETE_RATE_LIMIT = float(os.getenv("COMDEX_DELETE_RATE_LIMIT", "0"))
 DELETE_DISCOVERY_IDLE_SECONDS = float(os.getenv("COMDEX_DELETE_DISCOVERY_IDLE_SECONDS", "0.5"))
 DELETE_DISCOVERY_MAX_WAIT_SECONDS = float(os.getenv("COMDEX_DELETE_DISCOVERY_MAX_WAIT_SECONDS", "8.0"))
+DELETE_VERIFY_ATTEMPTS = int(os.getenv("COMDEX_DELETE_VERIFY_ATTEMPTS", "3"))
 
 
 class _DeleteDiscoverySession:
@@ -126,6 +162,8 @@ class _DeleteDiscoverySession:
         self._results = []
         self._lock = threading.Lock()
         self._subscribe_events = {}
+        self._barrier_topic = None
+        self._barrier_event = threading.Event()
         self._client.on_message = self._on_message
         self._client.on_subscribe = self._on_subscribe
         self._client.connect(broker, port)
@@ -133,6 +171,9 @@ class _DeleteDiscoverySession:
         _wait_until_connected(self._client)
 
     def _on_message(self, client, userdata, msg):
+        if msg.topic == self._barrier_topic:
+            self._barrier_event.set()
+            return
         if msg.retain:
             with self._lock:
                 self._results.append(msg.topic)
@@ -149,10 +190,10 @@ class _DeleteDiscoverySession:
     def _subscribe_and_wait_for_suback(self, topics, timeout):
         """Send one SUBSCRIBE packet covering every filter in `topics` and
         block until the broker's matching SUBACK is actually received (or
-        `timeout` elapses). The retained-message idle timer in collect()
-        must never start before this returns - subscribing and then
-        immediately timing an "idle" gap races the broker's own ack/
-        retained-redelivery latency, which is exactly the bug this closes."""
+        `timeout` elapses). collect() must not publish its barrier before
+        this returns: a barrier published while the subscription is still
+        unconfirmed can be processed by the broker before the subscription
+        exists, so it would never echo back."""
         event = threading.Event()
         with self._lock:
             result, mid = self._client.subscribe([(t, 1) for t in topics])
@@ -173,22 +214,11 @@ class _DeleteDiscoverySession:
             with self._lock:
                 self._subscribe_events.pop(mid, None)
 
-    def collect(self, topics, idle_timeout=DELETE_DISCOVERY_IDLE_SECONDS,
-                max_wait=DELETE_DISCOVERY_MAX_WAIT_SECONDS):
-        """Subscribe to every topic filter in `topics` in one SUBSCRIBE
-        packet, wait for the broker to confirm the subscription (SUBACK),
-        then collect whatever retained messages come back and return once
-        nothing new has arrived for `idle_timeout` seconds since the
-        subscription went active (or `max_wait` since SUBACK, whichever
-        first)."""
-        with self._lock:
-            self._results = []
-        if topics:
-            self._subscribe_and_wait_for_suback(topics, max_wait)
-        # The idle timer starts here - only after the subscription is
-        # confirmed active, not from whenever subscribe() happened to be
-        # called - so a slow/loaded broker or CI runner can't make
-        # discovery conclude "nothing found" before it was ever listening.
+    def _wait_for_idle(self, idle_timeout, max_wait):
+        """Fallback completion heuristic: stop once no new retained message
+        has arrived for `idle_timeout`. Inherently a guess - it cannot tell
+        "there is nothing to find" apart from "it has not arrived yet" -
+        so it is only used when the deterministic barrier is unavailable."""
         start = time.perf_counter()
         last_growth = start
         seen = 0
@@ -201,9 +231,47 @@ class _DeleteDiscoverySession:
                 seen = count
                 last_growth = now
             if now - last_growth > idle_timeout or now - start > max_wait:
-                break
-        if topics:
-            self._client.unsubscribe(topics)
+                return
+
+    def collect(self, topics, idle_timeout=DELETE_DISCOVERY_IDLE_SECONDS,
+                max_wait=DELETE_DISCOVERY_MAX_WAIT_SECONDS):
+        """Discover the retained topics matching `topics`.
+
+        Subscribes to every filter plus a unique barrier topic in one
+        SUBSCRIBE packet, waits for the SUBACK, then publishes to the
+        barrier topic. The broker queues the retained messages while it
+        handles that SUBSCRIBE - before it ever reads the later PUBLISH -
+        and delivers to this connection in order, so the barrier echoing
+        back is proof that every retained message that was going to arrive
+        already has. That is a deterministic end-of-retained signal;
+        waiting for an "idle" gap instead is a guess that reports an empty
+        result whenever the broker is slower than the guess (the CI
+        flakiness this replaces).
+
+        If the barrier never comes back (e.g. a broker ACL forbids
+        publishing to it), this falls back to the old idle heuristic and
+        logs, rather than failing the deletion outright."""
+        with self._lock:
+            self._results = []
+        if not topics:
+            return []
+
+        self._barrier_topic = f"comdex/_delete_discovery/{uuid.uuid4().hex}"
+        self._barrier_event.clear()
+        subscribed = list(topics) + [self._barrier_topic]
+        try:
+            self._subscribe_and_wait_for_suback(subscribed, max_wait)
+            self._client.publish(self._barrier_topic, "1", qos=1, retain=False)
+            if not self._barrier_event.wait(max_wait):
+                print(
+                    f"[delete_discovery_barrier_timeout] barrier not echoed within "
+                    f"{max_wait}s on {self._barrier_topic!r}; falling back to the idle "
+                    f"heuristic for this chunk (check broker ACLs for publish access)"
+                )
+                self._wait_for_idle(idle_timeout, max_wait)
+        finally:
+            self._client.unsubscribe(subscribed)
+            self._barrier_topic = None
         with self._lock:
             return list(self._results)
 
@@ -251,11 +319,11 @@ def _delete_entities_internal(ids, broker, port, hlink='+', my_area="unknown_are
     if not unique_ids:
         return dict(deleted=[], missing=[])
 
-    session = _DeleteDiscoverySession(broker, port)
-    try:
-        found = {}
-        for start in range(0, len(unique_ids), chunk_size):
-            chunk = unique_ids[start:start + chunk_size]
+    def discover(session, entity_ids):
+        """One full discovery pass over `entity_ids`, chunked."""
+        result = {}
+        for start in range(0, len(entity_ids), chunk_size):
+            chunk = entity_ids[start:start + chunk_size]
             chunk_set = set(chunk)
             topics = [my_area + '/entities/' + hlink + '/+/+/' + eid + '/#' for eid in chunk]
             for topic in session.collect(topics):
@@ -265,31 +333,65 @@ def _delete_entities_internal(ids, broker, port, hlink='+', my_area="unknown_are
                 eid = parts[-2]
                 if eid not in chunk_set:
                     continue
-                entry = found.setdefault(eid, {'topics': [], 'type': parts[-4], 'hlink': parts[-5]})
-                entry['topics'].append(topic)
+                entry = result.setdefault(eid, {'topics': set(), 'type': parts[-4], 'hlink': parts[-5]})
+                entry['topics'].add(topic)
+        return result
+
+    session = _DeleteDiscoverySession(broker, port)
+    try:
+        client, lock = publisher_pool.get(broker, port)
+        found = {}
+        scopes = set()
+        pending = unique_ids
+        remaining = {}
+
+        # Discover -> clear -> VERIFY by re-discovering the same ids, and
+        # clear again if anything survived. A single discover+clear pass
+        # reports success on faith; re-checking is what actually makes the
+        # deletion reliable on a real network, where a clear can be missed
+        # or a retained message can land late. Success means a verification
+        # pass found nothing left.
+        for attempt in range(1, DELETE_VERIFY_ATTEMPTS + 1):
+            remaining = discover(session, pending)
+            if not remaining:
+                break
+
+            clear_topics = []
+            for eid, info in remaining.items():
+                entry = found.setdefault(eid, {'topics': set(), 'type': info['type'], 'hlink': info['hlink']})
+                entry['topics'].update(info['topics'])
+                clear_topics.extend(info['topics'])
+                if singleidadvertisement:
+                    clear_topics.append('provider/' + broker + '/' + str(port) + '/' + my_area + '/'
+                                        + info['hlink'] + '/' + info['type'] + '/' + eid)
+                else:
+                    scopes.add((info['hlink'], info['type']))
+
+            _bounded_publish(client, lock, clear_topics)
+            # Only the ids just cleared need re-checking; ids that were
+            # never found are genuinely absent, not un-deleted.
+            pending = list(remaining.keys())
+            if attempt > 1:
+                print(f"[delete_retry] attempt {attempt}: re-cleared {len(clear_topics)} retained "
+                      f"topic(s) for {len(remaining)} entity id(s) that survived the previous pass")
+
+        if remaining:
+            sample = sorted(t for info in remaining.values() for t in info['topics'])[:10]
+            raise RuntimeError(
+                f"Delete verification failed after {DELETE_VERIFY_ATTEMPTS} attempts: "
+                f"{len(remaining)} entity id(s) still have retained topics on "
+                f"{broker}:{port} (e.g. {sample}) - reporting the failure instead of "
+                f"claiming a deletion that did not happen"
+            )
 
         missing = [eid for eid in unique_ids if eid not in found]
         if not found:
             return dict(deleted=[], missing=missing)
 
-        clear_topics = []
-        scopes = set()
-        for eid, info in found.items():
-            clear_topics.extend(info['topics'])
-            if singleidadvertisement:
-                clear_topics.append('provider/' + broker + '/' + str(port) + '/' + my_area + '/'
-                                    + info['hlink'] + '/' + info['type'] + '/' + eid)
-            else:
-                scopes.add((info['hlink'], info['type']))
-
-        client, lock = publisher_pool.get(broker, port)
-        _bounded_publish(client, lock, clear_topics)
-
         if not singleidadvertisement:
             for hl, tp in scopes:
                 check_topic = my_area + '/entities/' + hl + '/' + tp + '/+/+/#'
-                remaining = session.collect([check_topic])
-                if not remaining:
+                if not session.collect([check_topic]):
                     advert_topic = 'provider/' + broker + '/' + str(port) + '/' + my_area + '/' + hl + '/' + tp
                     with lock:
                         client.publish(advert_topic, None, 0, True)
@@ -1504,7 +1606,7 @@ def subscribe_for_advertisement_notification(
             jobs = []
             for i in range(0, number_of_threads):
                 #print("How many threads???")
-                process = multiprocessing.Process(
+                process = get_mp_context().Process(
                     target=multiple_subscriptions,
                     args=(
                         entity_type_flag, watched_attributes_flag, entity_id_flag,

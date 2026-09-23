@@ -48,6 +48,16 @@ def api_is_ready(base_url=BASE_URL):
         return False
 
 
+SERVER_LOG_DIR = Path(os.getenv("COMDEX_TEST_LOG_DIR", Path(__file__).resolve().parents[1] / "test-logs"))
+
+
+def server_log_path(name):
+    """Where a test-started uvicorn writes its stdout/stderr. CI prints
+    these on failure - a hung request is undiagnosable without them."""
+    SERVER_LOG_DIR.mkdir(parents=True, exist_ok=True)
+    return SERVER_LOG_DIR / f"comdex-api-{name}.log"
+
+
 def wait_for_api(timeout=15.0, base_url=BASE_URL):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -59,6 +69,7 @@ def wait_for_api(timeout=15.0, base_url=BASE_URL):
 
 class ComdexApiIntegrationTests(unittest.TestCase):
     server_process = None
+    server_log = None
 
     @classmethod
     def setUpClass(cls):
@@ -69,6 +80,10 @@ class ComdexApiIntegrationTests(unittest.TestCase):
 
         if not api_is_ready():
             root = Path(__file__).resolve().parents[1]
+            # Never discard the server's own output: when a request hangs,
+            # its traceback/log is the only evidence of where it hung, and
+            # CI prints this file on failure.
+            cls.server_log = open(server_log_path("shared-8000"), "w", encoding="utf-8")
             cls.server_process = subprocess.Popen(
                 [
                     sys.executable,
@@ -81,8 +96,8 @@ class ComdexApiIntegrationTests(unittest.TestCase):
                     "8000",
                 ],
                 cwd=root,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stdout=cls.server_log,
+                stderr=cls.server_log,
             )
             if not wait_for_api():
                 cls._stop_server()
@@ -106,6 +121,9 @@ class ComdexApiIntegrationTests(unittest.TestCase):
             cls.server_process.kill()
             cls.server_process.wait(timeout=5)
         cls.server_process = None
+        if cls.server_log is not None:
+            cls.server_log.close()
+            cls.server_log = None
 
     def unique(self, label):
         return f"{label}{uuid.uuid4().hex[:8]}"
@@ -1052,14 +1070,16 @@ class ComdexApiIntegrationTests(unittest.TestCase):
         env["COMDEX_SUBSCRIPTION_REAPER_POLL_SECONDS"] = "1"
 
         root = Path(__file__).resolve().parents[1]
+        log_handle = open(server_log_path(f"port-{port}"), "w", encoding="utf-8")
         proc = subprocess.Popen(
             [
                 sys.executable, "-m", "uvicorn", "actionhandlerAPI:app",
                 "--host", "127.0.0.1", "--port", str(port),
             ],
             cwd=root, env=env,
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            stdout=log_handle, stderr=subprocess.STDOUT,
         )
+        log_handle.close()  # the child keeps its own dup of the fd
         self.addCleanup(self._terminate_process, proc)
         try:
             self.assertTrue(
@@ -1339,10 +1359,13 @@ class ComdexApiIntegrationTests(unittest.TestCase):
         env = dict(os.environ)
         env["COMDEX_SINGLE_ID_ADVERTISEMENT"] = "true"
         root = Path(__file__).resolve().parents[1]
+        log_handle = open(server_log_path(f"port-{port}"), "w", encoding="utf-8")
         proc = subprocess.Popen(
             [sys.executable, "-m", "uvicorn", "actionhandlerAPI:app", "--host", "127.0.0.1", "--port", str(port)],
-            cwd=root, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            cwd=root, env=env,
+            stdout=log_handle, stderr=subprocess.STDOUT,
         )
+        log_handle.close()  # the child keeps its own dup of the fd
         self.addCleanup(self._terminate_process, proc)
         base_url = f"http://127.0.0.1:{port}"
         self.assertTrue(wait_for_api(timeout=15.0, base_url=base_url), "Dedicated singleidadvertisement=True server did not start")
@@ -1417,6 +1440,79 @@ class ComdexApiIntegrationTests(unittest.TestCase):
             "Discovery must wait for the (delayed) SUBACK before starting its idle "
             "timer, not conclude 'nothing found' while the subscription was not "
             "yet confirmed active",
+        )
+
+    def test_33c_delete_discovery_does_not_depend_on_the_idle_timeout(self):
+        """Discovery completion must be a deterministic signal, not a timing
+        guess. With the idle timeout forced to zero, the old heuristic would
+        conclude "nothing found" instantly; the barrier round-trip still has
+        to return the real retained topics.
+        """
+        root = Path(__file__).resolve().parents[1]
+        sys.path.insert(0, str(root))
+        import actionhandler as ah
+
+        entity_type = self.unique("ComdexBarrier")
+        entity_id = f"urn:ngsi-ld:{entity_type}:001"
+        self.addCleanup(self.delete_entity_best_effort, entity_id, BROKER1_PORT)
+        self.post_entity(self.entity_payload(entity_type, entity_id), BROKER1_PORT)
+
+        session = ah._DeleteDiscoverySession(BROKER_HOST, BROKER1_PORT)
+        self.addCleanup(session.close)
+
+        hlink = PRIMARY_CONTEXT.replace("/", "§")
+        topic_filter = f"{AREA}/entities/{hlink}/+/+/{entity_id}/#"
+        found = session.collect([topic_filter], idle_timeout=0.0)
+
+        self.assertTrue(
+            any(entity_id in t for t in found),
+            "Discovery must complete on the barrier round-trip, so an idle timeout "
+            "of 0 still finds every retained topic instead of returning empty",
+        )
+
+    def test_33d_delete_verifies_removal_and_retries_before_reporting_success(self):
+        """A delete must not report success on faith: it re-discovers the
+        ids it just cleared and clears again if anything survived. This
+        forces one clear to be silently dropped and asserts the verify pass
+        catches it, leaving nothing behind.
+        """
+        root = Path(__file__).resolve().parents[1]
+        sys.path.insert(0, str(root))
+        import actionhandler as ah
+
+        entity_type = self.unique("ComdexVerifyRetry")
+        entity_id = f"urn:ngsi-ld:{entity_type}:001"
+        self.addCleanup(self.delete_entity_best_effort, entity_id, BROKER1_PORT)
+        self.post_entity(self.entity_payload(entity_type, entity_id), BROKER1_PORT)
+
+        # Make the very first clear pass a no-op, simulating clears that the
+        # broker/network never applied. Without verification the delete would
+        # return "deleted" while the entity is still there - exactly the CI
+        # failure this guards.
+        real_bounded_publish = ah._bounded_publish
+        calls = {"n": 0}
+
+        def flaky_bounded_publish(client, lock, topics, *args, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return  # drop the first batch of clears entirely
+            return real_bounded_publish(client, lock, topics, *args, **kwargs)
+
+        ah._bounded_publish = flaky_bounded_publish
+        self.addCleanup(setattr, ah, "_bounded_publish", real_bounded_publish)
+
+        result = ah._delete_entities_internal(
+            [entity_id], BROKER_HOST, BROKER1_PORT, PRIMARY_CONTEXT, AREA,
+        )
+
+        self.assertGreaterEqual(calls["n"], 2, "the dropped clear must have been retried")
+        self.assertIn(entity_id, result["deleted"])
+        self.assertFalse(
+            self.mqtt_topic_exists(
+                BROKER_HOST, BROKER1_PORT,
+                self.entity_topic_filter(AREA, PRIMARY_CONTEXT, entity_type, entity_id),
+            ),
+            "verification+retry must leave no retained topics behind",
         )
 
     # ------------------------------------------------------------------
@@ -1599,10 +1695,13 @@ class ComdexApiIntegrationTests(unittest.TestCase):
         env["COMDEX_SUBSCRIPTION_IDLE_GRACE_SECONDS"] = str(grace_seconds)
         env["COMDEX_SUBSCRIPTION_REAPER_POLL_SECONDS"] = "1"
         root = Path(__file__).resolve().parents[1]
+        log_handle = open(server_log_path(f"port-{port}"), "w", encoding="utf-8")
         proc = subprocess.Popen(
             [sys.executable, "-m", "uvicorn", "actionhandlerAPI:app", "--host", "127.0.0.1", "--port", str(port)],
-            cwd=root, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            cwd=root, env=env,
+            stdout=log_handle, stderr=subprocess.STDOUT,
         )
+        log_handle.close()  # the child keeps its own dup of the fd
         self.addCleanup(self._terminate_process, proc)
         base_url = f"http://127.0.0.1:{port}"
         ws_base = base_url.replace("http://", "ws://")

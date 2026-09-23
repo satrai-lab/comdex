@@ -23,6 +23,7 @@ from actionhandler import (
     delete_entity,
     delete_entity_attr,
     get_entities,
+    get_mp_context,
     mark_subscription_connected,
     mark_subscription_disconnected,
     patch_entity,
@@ -344,7 +345,7 @@ def create_subscription(
     After creation connect to `WS /ngsi-ld/v1/subscriptions/{id}/ws` to stream notifications.
     """
     try:
-        notification_q = multiprocessing.Queue()
+        notification_q = get_mp_context().Queue()
         sub_id = post_subscription(body, broker, port, qos, my_area=my_area,
                                    notification_queue=notification_q)
         notification_queues[sub_id] = notification_q
@@ -618,7 +619,7 @@ async def subscription_websocket(websocket: WebSocket):
             await websocket.close(code=1011)
             return
     else:
-        notification_q = multiprocessing.Queue()
+        notification_q = get_mp_context().Queue()
         try:
             # post_subscription() does blocking MQTT connect/publish. Running
             # it directly on the event loop would freeze every other
