@@ -1,6 +1,7 @@
 import asyncio
 import json
 import multiprocessing
+import os
 import queue
 import threading
 import time
@@ -45,7 +46,7 @@ notification_queues: dict = {}
 # subscription be rejected instead of two sockets racing on one queue.
 one_shot_ws_owners: dict = {}
 QUEUE_WAIT_SECONDS = 0.005
-WS_HEARTBEAT_IDLE_SECONDS = 30.0
+WS_HEARTBEAT_IDLE_SECONDS = float(os.getenv("COMDEX_WS_HEARTBEAT_IDLE_SECONDS", "30"))
 WS_CLOSED_EXCEPTIONS = (WebSocketDisconnect, ConnectionClosed)
 
 app = FastAPI(

@@ -34,6 +34,7 @@ ComDeX stores and exchanges NGSI-LD entity data over MQTT. The FastAPI layer mak
 - [Stop A Subscription](#stop-a-subscription)
 - [WebSocket: Listen To Existing Subscription](#websocket-listen-to-existing-subscription)
 - [WebSocket: Create Subscription And Stream In One Connection](#websocket-create-subscription-and-stream-in-one-connection)
+- [Configuration](#configuration)
 - [Local Cross-Broker Test](#local-cross-broker-test)
 - [Run The Test Suite](#run-the-test-suite)
 - [Production Usage Checklist](#production-usage-checklist)
@@ -1205,6 +1206,14 @@ echo '{
   ]
 }' | websocat --no-close "ws://localhost:8000/ngsi-ld/v1/subscriptions/ws"
 ```
+
+## Configuration
+
+Environment variables that tune runtime behavior without changing code:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `COMDEX_WS_HEARTBEAT_IDLE_SECONDS` | `30` | Seconds of WebSocket inactivity before ComDeX sends a heartbeat/ping. |
 
 ## Local Cross-Broker Test
 
